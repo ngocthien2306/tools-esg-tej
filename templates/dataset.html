@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}{{ dataset.filename }} · ESG Lab{% endblock %}
+{% block content %}
+<div x-data="datasetView('{{ dataset.id }}')" x-init="init()" class="max-w-7xl mx-auto px-8 py-10">
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <a href="/" class="text-xs text-gray-500 hover:text-gray-900">← Datasets</a>
+      <h1 class="text-2xl font-semibold tracking-tight mt-1">{{ dataset.filename }}</h1>
+      <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+        <span class="mono">{{ dataset.id }}</span>
+        <span>·</span>
+        <span>{{ "{:,}".format(dataset.n_rows) }} rows × {{ dataset.n_cols }} cols</span>
+        <span>·</span>
+        <span>{{ dataset.created_at[:19].replace('T', ' ') }}</span>
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <a href="/train?dataset_id={{ dataset.id }}" class="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black transition-colors">Train</a>
+    </div>
+  </div>
+
+  <div class="border-b hairline mb-6">
+    <div class="flex gap-6 text-sm">
+      <template x-for="t in tabs" :key="t.key">
+        <button @click="setTab(t.key)"
+                :class="tab === t.key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                class="border-b-2 pb-3 -mb-px transition-colors font-medium"
+                x-text="t.label"></button>
+      </template>
+    </div>
+  </div>
+
+  <div x-show="loading" class="text-sm text-gray-500 py-16 text-center">Loading…</div>
+
+  <!-- Overview -->
+  <div x-show="!loading && tab === 'overview'" x-cloak class="space-y-6">
+    <div class="grid grid-cols-4 gap-3">
+      <div class="border hairline rounded-lg p-4">
+        <div class="text-xs text-gray-500">Rows</div>
+        <div class="text-2xl font-semibold mt-1" x-text="profile?.n_rows?.toLocaleString()"></div>
+      </div>
+      <div class="border hairline rounded-lg p-4">
+        <div class="text-xs text-gray-500">Columns</div>
+        <div class="text-2xl font-semibold mt-1" x-text="profile?.n_cols"></div>
+      </div>
+      <div class="border hairline rounded-lg p-4" x-show="profile?.panel">
+        <div class="text-xs text-gray-500">Entities × Periods</div>
+        <div class="text-2xl font-semibold mt-1">
+          <span x-text="profile?.panel?.n_entities?.toLocaleString()"></span>
+          <span class="text-gray-400 text-lg">×</span>
+          <span x-text="profile?.panel?.n_periods"></span>
+        </div>
+        <div class="text-[11px] mt-1" :class="profile?.panel?.balanced ? 'text-emerald-600' : 'text-amber-600'">
+          <span x-text="profile?.panel?.balanced ? 'Balanced panel' : 'Unbalanced panel'"></span>
+        </div>
+      </div>
+      <div class="border hairline rounded-lg p-4" x-show="profile?.panel">
+        <div class="text-xs text-gray-500">Time range</div>
+        <div class="text-2xl font-semibold mt-1">
+          <span x-text="profile?.panel?.time_min"></span>
+          <span class="text-gray-400 text-lg">–</span>
+          <span x-text="profile?.panel?.time_max"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="border hairline rounded-lg p-5" x-show="profile?.time_series?.time?.length">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="font-semibold">Trend over time</div>
+          <div class="text-xs text-gray-500">Mean theo từng năm</div>
+        </div>
+        <select x-model="tsCol" @change="renderTs()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+          <template x-for="c in tsCols" :key="c">
+            <option :value="c" x-text="c"></option>
+          </template>
+        </select>
+      </div>
+      <div id="ts-chart" style="height:300px"></div>
+    </div>
+
+    <!-- Panel structure preview if available -->
+    <div class="border hairline rounded-lg p-5" x-show="profile?.panel">
+      <div class="font-semibold mb-1">Panel structure</div>
+      <div class="text-xs text-gray-500 mb-3">Tự nhận diện dựa trên cột entity/time mặc định (COID × Year).</div>
+      <dl class="grid grid-cols-3 gap-4 text-sm">
+        <div>
+          <dt class="text-xs text-gray-500">Entity column</dt>
+          <dd class="font-medium mono mt-0.5" x-text="profile?.panel?.entity_col"></dd>
+        </div>
+        <div>
+          <dt class="text-xs text-gray-500">Time column</dt>
+          <dd class="font-medium mono mt-0.5" x-text="profile?.panel?.time_col"></dd>
+        </div>
+        <div>
+          <dt class="text-xs text-gray-500">Status</dt>
+          <dd class="font-medium mt-0.5" :class="profile?.panel?.balanced ? 'text-emerald-600' : 'text-amber-600'"
+              x-text="profile?.panel?.balanced ? 'Balanced' : 'Unbalanced — một số firm thiếu năm'"></dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+
+  <!-- Columns -->
+  <div x-show="!loading && tab === 'columns'" x-cloak>
+    <div class="mb-4 flex items-center justify-between">
+      <input x-model="colSearch" placeholder="Tìm cột..." class="border hairline rounded-md px-3 py-2 text-sm w-72 focus-ring">
+      <div class="text-xs text-gray-500">
+        <span x-text="filteredCols.length"></span> / <span x-text="profile?.columns?.length"></span> cols
+      </div>
+    </div>
+    <div class="border hairline rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b hairline text-left text-gray-500">
+          <tr>
+            <th class="px-4 py-3 font-medium">Column</th>
+            <th class="px-4 py-3 font-medium">Type</th>
+            <th class="px-4 py-3 font-medium">Missing</th>
+            <th class="px-4 py-3 font-medium">Unique</th>
+            <th class="px-4 py-3 font-medium text-right">Mean</th>
+            <th class="px-4 py-3 font-medium text-right">Std</th>
+            <th class="px-4 py-3 font-medium text-right">Min</th>
+            <th class="px-4 py-3 font-medium text-right">Median</th>
+            <th class="px-4 py-3 font-medium text-right">Max</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="c in filteredCols" :key="c.name">
+            <tr class="border-b hairline last:border-b-0 hover:bg-gray-50/50">
+              <td class="px-4 py-2.5 font-medium" x-text="c.name"></td>
+              <td class="px-4 py-2.5 text-gray-600 mono text-xs" x-text="c.dtype"></td>
+              <td class="px-4 py-2.5">
+                <span :class="c.pct_missing > 30 ? 'text-red-600 font-semibold' : (c.pct_missing > 5 ? 'text-amber-600' : 'text-gray-500')"
+                      x-text="c.pct_missing + '%'"></span>
+              </td>
+              <td class="px-4 py-2.5 text-gray-700" x-text="c.n_unique.toLocaleString()"></td>
+              <td class="px-4 py-2.5 text-gray-600 mono text-xs text-right" x-text="fmt(c.mean)"></td>
+              <td class="px-4 py-2.5 text-gray-600 mono text-xs text-right" x-text="fmt(c.std)"></td>
+              <td class="px-4 py-2.5 text-gray-600 mono text-xs text-right" x-text="fmt(c.min)"></td>
+              <td class="px-4 py-2.5 text-gray-600 mono text-xs text-right" x-text="fmt(c.median)"></td>
+              <td class="px-4 py-2.5 text-gray-600 mono text-xs text-right" x-text="fmt(c.max)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Correlation -->
+  <div x-show="!loading && tab === 'correlation'" x-cloak>
+    <div class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-1">Correlation matrix</div>
+      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Đỏ = dương cao, xanh = âm cao. Vùng đỏ đậm có thể gây multicollinearity.</div>
+      <div id="corr-chart" style="min-height:540px"></div>
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div x-show="!loading && tab === 'preview'" x-cloak>
+    <div class="border hairline rounded-lg overflow-auto" style="max-height: 640px">
+      <table class="text-xs">
+        <thead class="bg-gray-50 sticky top-0 z-10">
+          <tr>
+            <template x-for="c in preview?.columns" :key="c">
+              <th class="px-3 py-2 text-left font-medium text-gray-700 whitespace-nowrap border-r hairline" x-text="c"></th>
+            </template>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(row, i) in preview?.rows" :key="i">
+            <tr class="border-b hairline">
+              <template x-for="cell in row">
+                <td class="px-3 py-1.5 mono text-gray-700 whitespace-nowrap border-r hairline" x-text="cell"></td>
+              </template>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <div class="text-xs text-gray-500 mt-2">Hiển thị 50 dòng đầu trong tổng <span x-text="preview?.n_total?.toLocaleString()"></span> dòng.</div>
+  </div>
+</div>
+
+<script>
+function datasetView(id) {
+  return {
+    id,
+    loading: true,
+    profile: null,
+    preview: null,
+    tab: 'overview',
+    tabs: [
+      { key: 'overview', label: 'Overview' },
+      { key: 'columns', label: 'Columns' },
+      { key: 'correlation', label: 'Correlation' },
+      { key: 'preview', label: 'Preview' }
+    ],
+    colSearch: '',
+    tsCol: '',
+    tsCols: [],
+    corrLoaded: false,
+
+    async init() {
+      const [p, prev] = await Promise.all([
+        fetch(`/api/datasets/${this.id}/profile`).then(r => r.json()),
+        fetch(`/api/datasets/${this.id}/preview`).then(r => r.json()),
+      ]);
+      this.profile = p;
+      this.preview = prev;
+      this.tsCols = Object.keys(p.time_series?.series || {});
+      // Prefer TESG/Score columns
+      const preferred = this.tsCols.find(c => c.toLowerCase().includes('tesg')) ||
+                        this.tsCols.find(c => c.toLowerCase().includes('score')) ||
+                        this.tsCols[0] || '';
+      this.tsCol = preferred;
+      this.loading = false;
+      this.$nextTick(() => this.renderTs());
+    },
+
+    setTab(k) {
+      this.tab = k;
+      if (k === 'correlation' && !this.corrLoaded) this.loadCorr();
+      if (k === 'overview') this.$nextTick(() => this.renderTs());
+    },
+
+    get filteredCols() {
+      if (!this.profile) return [];
+      const q = this.colSearch.toLowerCase();
+      return q ? this.profile.columns.filter(c => c.name.toLowerCase().includes(q)) : this.profile.columns;
+    },
+
+    fmt(v) {
+      if (v === undefined || v === null) return '—';
+      if (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3)) return Number(v).toExponential(2);
+      return Number(v).toFixed(3);
+    },
+
+    renderTs() {
+      if (!this.tsCol || !this.profile?.time_series?.time) return;
+      const ts = this.profile.time_series;
+      Plotly.newPlot('ts-chart', [{
+        x: ts.time, y: ts.series[this.tsCol],
+        type: 'scatter', mode: 'lines+markers',
+        line: { color: '#111827', width: 2 },
+        marker: { size: 7, color: '#111827' },
+      }], {
+        margin: { l: 60, r: 20, t: 10, b: 40 },
+        xaxis: { gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { gridcolor: '#f3f4f6' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 12 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    async loadCorr() {
+      this.corrLoaded = true;
+      const r = await fetch(`/api/datasets/${this.id}/correlation`);
+      const corr = await r.json();
+      this.$nextTick(() => {
+        Plotly.newPlot('corr-chart', [{
+          z: corr.matrix, x: corr.cols, y: corr.cols,
+          type: 'heatmap',
+          colorscale: [[0, '#1e3a8a'], [0.5, '#ffffff'], [1, '#7f1d1d']],
+          zmin: -1, zmax: 1,
+        }], {
+          margin: { l: 220, r: 20, t: 10, b: 220 },
+          xaxis: { tickangle: -45, tickfont: { size: 10 } },
+          yaxis: { tickfont: { size: 10 }, autorange: 'reversed' },
+          font: { family: 'Inter' },
+        }, { displayModeBar: false, responsive: true });
+      });
+    }
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}ESG Lab{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    html, body, button, input, select, textarea { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .mono, code, pre { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .hairline { border-color: rgb(229, 231, 235); }
+    .focus-ring:focus { outline: 2px solid rgb(17, 24, 39); outline-offset: 2px; }
+    [x-cloak] { display: none !important; }
+    /* Subtle scrollbar */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgb(229,231,235); border-radius: 6px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgb(209,213,219); }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-white text-gray-900 antialiased">
+  <div class="flex min-h-screen">
+    <aside class="w-60 border-r hairline bg-gray-50/40 flex flex-col flex-shrink-0">
+      <div class="px-5 py-5 border-b hairline">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-6 rounded bg-gray-900 flex items-center justify-center">
+            <span class="text-white text-xs font-bold">E</span>
+          </div>
+          <div>
+            <div class="text-sm font-semibold tracking-tight leading-none">ESG Lab</div>
+            <div class="text-[11px] text-gray-500 mt-1 leading-none">Panel regression toolkit</div>
+          </div>
+        </div>
+      </div>
+      <nav class="flex-1 px-3 py-3 space-y-0.5 text-sm">
+        {% set links = [
+          ('datasets', '/', 'Datasets'),
+          ('merge', '/merge', 'Merge'),
+          ('train', '/train', 'Train'),
+          ('runs', '/runs', 'Runs')
+        ] %}
+        {% for key, href, label in links %}
+        <a href="{{ href }}" class="flex items-center px-3 py-2 rounded-md transition-colors {% if active == key %}bg-gray-900 text-white{% else %}text-gray-700 hover:bg-gray-100{% endif %}">
+          {{ label }}
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="px-5 py-3 border-t hairline text-[11px] text-gray-500 mono">v0.1</div>
+    </aside>
+    <main class="flex-1 min-w-0">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <div x-data="{ toasts: [] }"
+       @toast.window="const id = Date.now() + Math.random(); toasts.push({ id, msg: $event.detail.msg, kind: $event.detail.kind || 'info' }); setTimeout(() => { toasts = toasts.filter(t => t.id !== id) }, 3500)"
+       class="fixed bottom-6 right-6 space-y-2 z-50">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="px-4 py-3 rounded-md shadow-lg border bg-white text-sm flex items-center gap-2 min-w-[260px]"
+           :class="t.kind === 'error' ? 'border-red-300 text-red-700' : (t.kind === 'success' ? 'border-emerald-300 text-emerald-700' : 'hairline text-gray-900')">
+        <span x-text="t.msg"></span>
+      </div>
+    </template>
+  </div>
+</body>
+</html>

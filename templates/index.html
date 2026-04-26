@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Datasets · ESG Lab{% endblock %}
+{% block content %}
+<div x-data="datasetsPage()" class="max-w-6xl mx-auto px-8 py-10">
+  <div class="flex items-end justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Datasets</h1>
+      <p class="text-sm text-gray-600 mt-1">Upload data và xem cấu trúc. Hỗ trợ Excel (.xlsx, .xls) và CSV.</p>
+    </div>
+    <label class="cursor-pointer inline-flex items-center gap-2 bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black focus-ring transition-colors">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5a.5.5 0 0 1 .5-.5z"/></svg>
+      <span>Upload file</span>
+      <input type="file" class="hidden" accept=".xlsx,.xls,.csv" @change="upload($event)" />
+    </label>
+  </div>
+
+  <div class="border hairline rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b hairline">
+        <tr class="text-left text-gray-500">
+          <th class="px-4 py-3 font-medium">Tên file</th>
+          <th class="px-4 py-3 font-medium">Rows</th>
+          <th class="px-4 py-3 font-medium">Cols</th>
+          <th class="px-4 py-3 font-medium">Source</th>
+          <th class="px-4 py-3 font-medium">Uploaded</th>
+          <th class="px-4 py-3 font-medium text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in datasets %}
+        <tr class="border-b hairline last:border-b-0 hover:bg-gray-50/50">
+          <td class="px-4 py-3">
+            <a href="/datasets/{{ d.id }}" class="font-medium text-gray-900 hover:underline">{{ d.filename }}</a>
+            <div class="text-[11px] text-gray-500 mono mt-0.5">{{ d.id }}</div>
+          </td>
+          <td class="px-4 py-3 text-gray-700">{{ "{:,}".format(d.n_rows) }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ d.n_cols }}</td>
+          <td class="px-4 py-3">
+            <span class="inline-flex px-2 py-0.5 text-[11px] rounded {% if d.source == 'merge' %}bg-blue-50 text-blue-700{% else %}bg-gray-100 text-gray-700{% endif %}">{{ d.source }}</span>
+          </td>
+          <td class="px-4 py-3 text-gray-600 text-xs">{{ d.created_at[:19].replace('T', ' ') }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="/train?dataset_id={{ d.id }}" class="text-sm text-gray-700 hover:text-gray-900 mr-3">Train</a>
+            <button @click="del('{{ d.id }}')" class="text-sm text-gray-500 hover:text-red-600">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not datasets %}
+        <tr><td colspan="6" class="px-4 py-16 text-center text-gray-500 text-sm">
+          <div>Chưa có dataset nào.</div>
+          <div class="text-xs mt-1">Click <span class="font-medium">Upload file</span> ở góc phải để bắt đầu.</div>
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if runs %}
+  <div class="mt-12">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Recent runs</h2>
+      <a href="/runs" class="text-xs text-gray-500 hover:text-gray-900">View all →</a>
+    </div>
+    <div class="border hairline rounded-lg divide-y hairline">
+      {% for r in runs %}
+      <a href="/runs/{{ r.id }}" class="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+        <div>
+          <div class="text-sm font-medium">{{ r.target }}</div>
+          <div class="text-[11px] text-gray-500 mt-0.5">{{ r.created_at[:19].replace('T', ' ') }}{% if r.note %} · {{ r.note }}{% endif %}</div>
+        </div>
+        <div class="mono text-[11px] text-gray-500">{{ r.id }}</div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function datasetsPage() {
+  return {
+    async upload(ev) {
+      const f = ev.target.files[0];
+      if (!f) return;
+      const fd = new FormData();
+      fd.append('file', f);
+      window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Uploading…' } }));
+      const r = await fetch('/api/datasets/upload', { method: 'POST', body: fd });
+      if (r.ok) {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Uploaded', kind: 'success' } }));
+        setTimeout(() => location.reload(), 400);
+      } else {
+        const err = await r.text();
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Error: ' + err.slice(0, 200), kind: 'error' } }));
+      }
+    },
+    async del(id) {
+      if (!confirm('Xóa dataset này?')) return;
+      await fetch('/api/datasets/' + id, { method: 'DELETE' });
+      location.reload();
+    }
+  }
+}
+</script>
+{% endblock %}

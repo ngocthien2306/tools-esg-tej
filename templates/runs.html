@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Runs · ESG Lab{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-8 py-10">
+  <div class="flex items-end justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Runs</h1>
+      <p class="text-sm text-gray-600 mt-1">Lịch sử các lần training.</p>
+    </div>
+    <a href="/train" class="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black">New run</a>
+  </div>
+
+  <div class="border hairline rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b hairline text-left text-gray-500">
+        <tr>
+          <th class="px-4 py-3 font-medium">Run ID</th>
+          <th class="px-4 py-3 font-medium">Target</th>
+          <th class="px-4 py-3 font-medium">Note</th>
+          <th class="px-4 py-3 font-medium">Created</th>
+          <th class="px-4 py-3 font-medium text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr class="border-b hairline last:border-b-0 hover:bg-gray-50/50">
+          <td class="px-4 py-3"><a href="/runs/{{ r.id }}" class="font-medium mono text-xs hover:underline">{{ r.id }}</a></td>
+          <td class="px-4 py-3 font-medium">{{ r.target }}</td>
+          <td class="px-4 py-3 text-gray-600">{{ r.note or '—' }}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">{{ r.created_at[:19].replace('T', ' ') }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="/api/runs/{{ r.id }}/export" class="text-sm text-gray-700 hover:text-gray-900 mr-3">Export</a>
+            <a href="/runs/{{ r.id }}" class="text-sm text-gray-700 hover:text-gray-900">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not runs %}
+        <tr><td colspan="5" class="px-4 py-16 text-center text-gray-500 text-sm">
+          <div>Chưa có run nào.</div>
+          <div class="text-xs mt-1">Click <a href="/train" class="underline">New run</a> để chạy training đầu tiên.</div>
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

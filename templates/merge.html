@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Merge · ESG Lab{% endblock %}
+{% block content %}
+<script id="merge-init" type="application/json">{{ datasets | tojson }}</script>
+
+<div x-data="mergePage()" class="max-w-5xl mx-auto px-8 py-10">
+  <h1 class="text-2xl font-semibold tracking-tight">Merge datasets</h1>
+  <p class="text-sm text-gray-600 mt-1 mb-8">Chọn 2+ dataset, set key columns, và tool sẽ join thành dataset mới.</p>
+
+  <div class="space-y-5">
+    <section class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div class="font-semibold">1. Chọn datasets</div>
+        <div class="text-xs text-gray-500"><span x-text="selected.length"></span> selected</div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        {% for d in datasets %}
+        <label class="flex items-start gap-3 p-3 border hairline rounded-md hover:bg-gray-50 cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900 transition-colors">
+          <input type="checkbox" value="{{ d.id }}" @change="toggle('{{ d.id }}', $event.target.checked)" class="mt-1">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium text-sm truncate">{{ d.filename }}</div>
+            <div class="text-xs opacity-70 mt-0.5">{{ "{:,}".format(d.n_rows) }} rows × {{ d.n_cols }} cols</div>
+          </div>
+        </label>
+        {% endfor %}
+        {% if not datasets %}
+        <div class="col-span-2 text-center text-sm text-gray-500 py-8">Chưa có dataset. <a href="/" class="underline">Upload</a> trước đã.</div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="border hairline rounded-lg p-5" x-show="selected.length >= 2" x-cloak>
+      <div class="font-semibold mb-2">2. Key columns</div>
+      <div class="text-xs text-gray-500 mb-3">Cột chung xuất hiện ở tất cả dataset đã chọn. Click để chọn key.</div>
+      <div class="flex flex-wrap gap-1.5">
+        <template x-for="c in commonCols" :key="c">
+          <label class="inline-flex items-center gap-2 px-3 py-1.5 border hairline rounded-md text-sm cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
+            <input type="checkbox" :value="c" x-model="keys" class="hidden">
+            <span x-text="c"></span>
+          </label>
+        </template>
+      </div>
+      <div x-show="commonCols.length === 0" class="text-sm text-amber-700">Không có cột chung. Datasets không thể merge với cấu trúc hiện tại.</div>
+    </section>
+
+    <section class="border hairline rounded-lg p-5" x-show="keys.length > 0" x-cloak>
+      <div class="font-semibold mb-3">3. Strategy</div>
+      <div class="flex gap-2">
+        <template x-for="h in ['inner', 'left', 'outer']" :key="h">
+          <label class="px-4 py-2 border hairline rounded-md text-sm cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900 capitalize">
+            <input type="radio" name="how" :value="h" x-model="how" class="hidden">
+            <span x-text="h"></span>
+          </label>
+        </template>
+      </div>
+      <div class="text-xs text-gray-500 mt-3" x-show="how === 'inner'">Inner: chỉ giữ rows có đủ key ở mọi dataset.</div>
+      <div class="text-xs text-gray-500 mt-3" x-show="how === 'left'">Left: giữ tất cả rows của dataset đầu tiên.</div>
+      <div class="text-xs text-gray-500 mt-3" x-show="how === 'outer'">Outer: union — giữ tất cả rows; chỗ thiếu thành NaN.</div>
+    </section>
+
+    <div x-show="keys.length > 0" x-cloak class="flex justify-end">
+      <button @click="run()" :disabled="running"
+              class="bg-gray-900 text-white text-sm font-medium px-5 py-2 rounded-md hover:bg-black disabled:opacity-50">
+        <span x-show="!running">Run merge</span>
+        <span x-show="running">Merging…</span>
+      </button>
+    </div>
+
+    <div x-show="result" x-cloak class="border border-emerald-200 bg-emerald-50 rounded-lg p-5">
+      <div class="font-semibold text-emerald-800">Merge thành công</div>
+      <div class="text-sm text-emerald-700 mt-1">
+        <span x-text="result?.n_rows?.toLocaleString()"></span> rows ·
+        <span x-text="result?.n_cols"></span> cols
+      </div>
+      <div class="mt-3 flex gap-2">
+        <a :href="'/datasets/' + result?.id" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700">View dataset</a>
+        <a :href="'/train?dataset_id=' + result?.id" class="text-sm border border-emerald-600 text-emerald-700 px-3 py-1.5 rounded-md hover:bg-emerald-100">Train</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function mergePage() {
+  const _meta = JSON.parse(document.getElementById('merge-init').textContent);
+  const _colsById = Object.fromEntries(_meta.map(d => [d.id, d.columns || []]));
+  return {
+    selected: [],
+    cols: {},
+    keys: [],
+    how: 'inner',
+    running: false,
+    result: null,
+
+    toggle(id, on) {
+      if (on) {
+        this.selected.push(id);
+        this.cols[id] = _colsById[id] || [];
+      } else {
+        this.selected = this.selected.filter(s => s !== id);
+        delete this.cols[id];
+        this.keys = this.keys.filter(k => this.commonCols.includes(k));
+      }
+    },
+
+    get commonCols() {
+      if (this.selected.length < 2) return [];
+      const arrays = this.selected.map(s => this.cols[s] || []);
+      return arrays[0].filter(c => arrays.every(a => a.includes(c)));
+    },
+
+    async run() {
+      this.running = true;
+      this.result = null;
+      const r = await fetch('/api/datasets/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataset_ids: this.selected, on: this.keys, how: this.how })
+      });
+      this.running = false;
+      if (r.ok) {
+        this.result = await r.json();
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Merged', kind: 'success' } }));
+      } else {
+        const err = await r.text();
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Failed: ' + err.slice(0, 200), kind: 'error' } }));
+      }
+    }
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}{{ result.config.target }} · Run{% endblock %}
+{% block content %}
+<div x-data="runView()" x-init="init()" class="max-w-7xl mx-auto px-8 py-10">
+  <div class="flex items-start justify-between mb-8">
+    <div>
+      <a href="/runs" class="text-xs text-gray-500 hover:text-gray-900">← Runs</a>
+      <h1 class="text-2xl font-semibold tracking-tight mt-1">{{ result.config.target }}</h1>
+      <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+        <span class="mono">{{ meta.id }}</span>
+        <span>·</span>
+        <span>{{ meta.created_at[:19].replace('T', ' ') }}</span>
+        {% if meta.note %}<span>·</span><span>{{ meta.note }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <a href="/api/runs/{{ meta.id }}/export" class="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black">Export Excel</a>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-4 gap-3 mb-8">
+    <div class="border hairline rounded-lg p-4">
+      <div class="text-xs text-gray-500">N (after lag)</div>
+      <div class="text-2xl font-semibold mt-1">{{ "{:,}".format(result.panel.n_lag) }}</div>
+      <div class="text-[11px] text-gray-500 mt-1">dropped {{ "{:,}".format(result.panel.n_dropped) }} rows</div>
+    </div>
+    <div class="border hairline rounded-lg p-4">
+      <div class="text-xs text-gray-500">N firms</div>
+      <div class="text-2xl font-semibold mt-1">{{ result.panel.n_firms }}</div>
+    </div>
+    <div class="border hairline rounded-lg p-4">
+      <div class="text-xs text-gray-500">Models</div>
+      <div class="text-2xl font-semibold mt-1">{{ result.summary | length }}</div>
+    </div>
+    <div class="border hairline rounded-lg p-4">
+      <div class="text-xs text-gray-500">Lag (base / rev)</div>
+      <div class="text-2xl font-semibold mt-1">{{ result.config.base_lag }} <span class="text-gray-400 text-lg">/</span> {{ result.config.rev_lag }}</div>
+    </div>
+  </div>
+
+  {% if result.did %}
+  <div class="border hairline rounded-lg p-5 mb-8 bg-gray-50/40">
+    <div class="font-semibold mb-3">DID setup</div>
+    <div class="grid grid-cols-4 gap-4 text-sm">
+      <div><div class="text-xs text-gray-500">Treatment</div><div class="font-medium mt-0.5">{{ result.did.treat_col }}</div></div>
+      <div><div class="text-xs text-gray-500">Cutoff</div><div class="font-medium mono mt-0.5">{{ "%.4f"|format(result.did.cutoff) }}</div></div>
+      <div><div class="text-xs text-gray-500">Post year</div><div class="font-medium mt-0.5">≥ {{ result.did.post_year }}</div></div>
+      <div><div class="text-xs text-gray-500">Treated × Post</div><div class="font-medium mt-0.5">{{ result.did.n_did }} obs</div></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Summary table -->
+  <div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">Models summary</h2>
+    <div class="border hairline rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b hairline text-left text-gray-500">
+          <tr>
+            <th class="px-4 py-3 font-medium">Model</th>
+            <th class="px-4 py-3 font-medium">Key Variable</th>
+            <th class="px-4 py-3 font-medium text-right">p-value</th>
+            <th class="px-4 py-3 font-medium text-center">Sig</th>
+            <th class="px-4 py-3 font-medium text-right">N</th>
+            <th class="px-4 py-3 font-medium text-right">R² Within</th>
+            <th class="px-4 py-3 font-medium text-right">R² Overall</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in result.summary %}
+          <tr class="border-b hairline last:border-b-0">
+            <td class="px-4 py-3">
+              <div class="font-medium">{{ s.model }}</div>
+              {% if s.label %}<div class="text-[11px] text-gray-500 mt-0.5">{{ s.label }}</div>{% endif %}
+            </td>
+            <td class="px-4 py-3 mono text-xs">{{ s.key_var or '—' }}</td>
+            <td class="px-4 py-3 mono text-xs text-right">{{ s.key_p }}</td>
+            <td class="px-4 py-3 text-center">
+              {% if s.key_sig in ('***', '**') %}
+                <span class="font-bold text-red-600">{{ s.key_sig }}</span>
+              {% elif s.key_sig == '*' %}
+                <span class="font-bold text-amber-600">{{ s.key_sig }}</span>
+              {% else %}
+                <span class="text-gray-400 text-xs">{{ s.key_sig }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">{{ "{:,}".format(s.n_obs) }}</td>
+            <td class="px-4 py-3 mono text-xs text-right">{{ s.rsq_within }}</td>
+            <td class="px-4 py-3 mono text-xs text-right">{{ s.rsq_overall }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-cols-2 gap-5 mb-8">
+    <div class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-1">Forest plot</div>
+      <div class="text-xs text-gray-500 mb-3">Coefficient ± 95% CI cho biến chính ở mỗi model</div>
+      <div id="forest" style="min-height: 360px"></div>
+    </div>
+    <div class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-1">p-value heatmap</div>
+      <div class="text-xs text-gray-500 mb-3">Xanh = significant, đỏ = not significant</div>
+      <div id="heatmap" style="min-height: 360px"></div>
+    </div>
+  </div>
+
+  <!-- Per-model coefficients -->
+  <div>
+    <h2 class="text-lg font-semibold mb-3">Coefficients</h2>
+    <div class="border hairline rounded-lg overflow-hidden">
+      <div class="border-b hairline bg-gray-50 flex overflow-x-auto">
+        {% for m, _ in result.results.items() %}
+        <button @click="activeModel = '{{ m }}'"
+                :class="activeModel === '{{ m }}' ? 'bg-white border-b-2 border-gray-900 text-gray-900' : 'text-gray-500 hover:text-gray-900'"
+                class="px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap">{{ m }}</button>
+        {% endfor %}
+      </div>
+
+      {% for m, d in result.results.items() %}
+      <div x-show="activeModel === '{{ m }}'" x-cloak class="overflow-x-auto">
+        {% if d.error %}
+        <div class="p-5 text-red-600 text-sm">Error: {{ d.error }}</div>
+        {% else %}
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50/50 border-b hairline text-left text-gray-500">
+            <tr>
+              <th class="px-4 py-2.5 font-medium">Variable</th>
+              <th class="px-4 py-2.5 font-medium text-right">Coef</th>
+              <th class="px-4 py-2.5 font-medium text-right">Std Err</th>
+              <th class="px-4 py-2.5 font-medium text-right">t-stat</th>
+              <th class="px-4 py-2.5 font-medium text-right">p-value</th>
+              <th class="px-4 py-2.5 font-medium text-right">CI low</th>
+              <th class="px-4 py-2.5 font-medium text-right">CI high</th>
+              <th class="px-4 py-2.5 font-medium text-center">Sig</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in d.coefs %}
+            <tr class="border-b hairline last:border-b-0">
+              <td class="px-4 py-2 font-medium">{{ c.var }}</td>
+              <td class="px-4 py-2 mono text-xs text-right {% if c.pvalue < 0.05 %}text-red-600 font-semibold{% elif c.pvalue < 0.10 %}text-amber-600 font-medium{% endif %}">{{ "%.4f"|format(c.coef) }}</td>
+              <td class="px-4 py-2 mono text-xs text-right text-gray-600">{{ "%.4f"|format(c.se) }}</td>
+              <td class="px-4 py-2 mono text-xs text-right text-gray-600">{{ "%.3f"|format(c.tstat) }}</td>
+              <td class="px-4 py-2 mono text-xs text-right">{{ "%.4f"|format(c.pvalue) }}</td>
+              <td class="px-4 py-2 mono text-xs text-right text-gray-500">{{ "%.4f"|format(c.ci_low) }}</td>
+              <td class="px-4 py-2 mono text-xs text-right text-gray-500">{{ "%.4f"|format(c.ci_high) }}</td>
+              <td class="px-4 py-2 text-center">
+                {% if c.sig in ('***', '**') %}<span class="font-bold text-red-600">{{ c.sig }}</span>
+                {% elif c.sig == '*' %}<span class="font-bold text-amber-600">{{ c.sig }}</span>
+                {% else %}<span class="text-gray-300">—</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="px-4 py-3 bg-gray-50/50 text-xs text-gray-600 border-t hairline mono">
+          N = {{ "{:,}".format(d.n_obs) }} · R²<sub>w</sub> = {{ "%.4f"|format(d.rsq_within) }} · R²<sub>b</sub> = {{ "%.4f"|format(d.rsq_between) }} · R²<sub>o</sub> = {{ "%.4f"|format(d.rsq_overall) }}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script id="run-data" type="application/json">{{ result | tojson }}</script>
+<script>
+const RESULT = JSON.parse(document.getElementById('run-data').textContent);
+
+function runView() {
+  const firstModel = Object.keys(RESULT.results)[0] || '';
+  return {
+    activeModel: firstModel,
+    init() {
+      this.$nextTick(() => {
+        renderForest();
+        renderHeatmap();
+      });
+    }
+  }
+}
+
+const PALETTE = ['#111827', '#2563eb', '#16a34a', '#9333ea', '#dc2626', '#0891b2', '#ea580c'];
+
+function renderForest() {
+  const traces = [];
+  const models = Object.keys(RESULT.results);
+  models.forEach((m, mi) => {
+    const d = RESULT.results[m];
+    if (d.error) return;
+    const coefs = d.coefs;
+    const ys = coefs.map(c => c.var);
+    const xs = coefs.map(c => c.coef);
+    const errLow = coefs.map(c => c.coef - c.ci_low);
+    const errHigh = coefs.map(c => c.ci_high - c.coef);
+    traces.push({
+      name: m, x: xs, y: ys,
+      type: 'scatter', mode: 'markers',
+      marker: { size: 7, color: PALETTE[mi % PALETTE.length] },
+      error_x: { type: 'data', symmetric: false, array: errHigh, arrayminus: errLow,
+                 thickness: 1, color: PALETTE[mi % PALETTE.length] },
+    });
+  });
+  Plotly.newPlot('forest', traces, {
+    margin: { l: 220, r: 20, t: 20, b: 60 },
+    xaxis: { title: 'Coefficient', zeroline: true, zerolinecolor: '#000', gridcolor: '#f3f4f6' },
+    yaxis: { tickfont: { size: 10 }, automargin: true },
+    showlegend: true, legend: { orientation: 'h', y: -0.2 },
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    font: { family: 'Inter', size: 11 },
+  }, { displayModeBar: false, responsive: true });
+}
+
+function renderHeatmap() {
+  const models = Object.keys(RESULT.results).filter(m => !RESULT.results[m].error);
+  if (!models.length) return;
+  const allVars = [];
+  models.forEach(m => RESULT.results[m].coefs.forEach(c => {
+    if (!allVars.includes(c.var)) allVars.push(c.var);
+  }));
+  const z = allVars.map(v => models.map(m => {
+    const c = RESULT.results[m].coefs.find(c => c.var === v);
+    return c ? c.pvalue : null;
+  }));
+  Plotly.newPlot('heatmap', [{
+    z, x: models, y: allVars, type: 'heatmap',
+    colorscale: [[0, '#10b981'], [0.3, '#fbbf24'], [0.5, '#f97316'], [1, '#7f1d1d']],
+    zmin: 0, zmax: 0.2,
+    text: z.map(row => row.map(v => v === null ? '—' : v.toFixed(3))),
+    texttemplate: '%{text}',
+    textfont: { size: 9 },
+    hoverongaps: false,
+  }], {
+    margin: { l: 220, r: 20, t: 20, b: 80 },
+    xaxis: { tickangle: -30, tickfont: { size: 10 } },
+    yaxis: { tickfont: { size: 10 }, automargin: true },
+    font: { family: 'Inter', size: 11 },
+  }, { displayModeBar: false, responsive: true });
+}
+</script>
+{% endblock %}

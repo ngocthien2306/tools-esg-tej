@@ -1,0 +1,34 @@
+# Runtime data
+uploads/*
+runs/*
+!uploads/.gitkeep
+!runs/.gitkeep
+tool.db
+tool.db-journal
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp
+.cache/

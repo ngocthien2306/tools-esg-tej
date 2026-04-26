@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block title %}Train · ESG Lab{% endblock %}
+{% block content %}
+<script id="train-init" type="application/json">{% if selected %}{"id": {{ selected.id | tojson }}, "name": {{ selected.filename | tojson }}, "columns": {{ selected.columns | tojson }}}{% else %}{"id": "", "name": "", "columns": []}{% endif %}</script>
+
+<div x-data="trainPage()" x-init="init()" class="max-w-5xl mx-auto px-8 py-10">
+  <h1 class="text-2xl font-semibold tracking-tight">New training run</h1>
+  <p class="text-sm text-gray-600 mt-1 mb-8">Cấu hình panel regression và chạy.</p>
+
+  <!-- No dataset chosen yet -->
+  <div x-show="!datasetId">
+    <div class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-3">Chọn dataset</div>
+      {% if datasets %}
+      <div class="grid grid-cols-2 gap-2">
+        {% for d in datasets %}
+        <a href="/train?dataset_id={{ d.id }}" class="block p-3 border hairline rounded-md hover:bg-gray-50 transition-colors">
+          <div class="font-medium text-sm">{{ d.filename }}</div>
+          <div class="text-xs text-gray-500 mt-0.5">{{ "{:,}".format(d.n_rows) }} rows × {{ d.n_cols }} cols</div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-sm text-gray-500 py-4">Chưa có dataset. <a href="/" class="underline">Upload</a> file trước.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div x-show="datasetId" x-cloak class="space-y-5">
+    <!-- Data & Target -->
+    <section class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-4">Data &amp; Target</div>
+      <div class="grid grid-cols-2 gap-5">
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Dataset</label>
+          <div class="text-sm font-medium" x-text="datasetName"></div>
+          <div class="text-[11px] text-gray-500 mono" x-text="datasetId"></div>
+          <a href="/train" class="text-xs text-gray-500 hover:text-gray-900 mt-1 inline-block">Change →</a>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Target (dependent variable)</label>
+          <select x-model="cfg.target" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+            <option value="">—</option>
+            <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel structure -->
+    <section class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-4">Panel structure</div>
+      <div class="grid grid-cols-3 gap-5">
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Entity column</label>
+          <select x-model="cfg.entity_col" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+            <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Time column</label>
+          <select x-model="cfg.time_col" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+            <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Industry column</label>
+          <select x-model="cfg.industry_col" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+            <option value="">— None —</option>
+            <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-5 mt-4">
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Year min (optional)</label>
+          <input type="number" x-model.number="cfg.year_min" placeholder="auto" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Year max (optional)</label>
+          <input type="number" x-model.number="cfg.year_max" placeholder="auto" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="border hairline rounded-lg p-5" x-data="{ q1: '', q2: '' }">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="font-semibold">Base features</div>
+          <div class="text-xs text-gray-500 mt-0.5">Biến control (firm characteristics). Sẽ được lag <span class="mono" x-text="cfg.base_lag"></span> năm.</div>
+        </div>
+        <input x-model="q1" placeholder="Filter…" class="px-2.5 py-1.5 text-xs border hairline rounded-md w-48 focus-ring">
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        <template x-for="c in availableCols.filter(c => c.toLowerCase().includes(q1.toLowerCase()))" :key="'bf_' + c">
+          <label class="inline-flex items-center gap-1.5 px-2.5 py-1 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
+            <input type="checkbox" :value="c" x-model="cfg.base_features" class="hidden">
+            <span x-text="c"></span>
+          </label>
+        </template>
+      </div>
+
+      <div class="flex items-center justify-between mb-3 mt-7">
+        <div>
+          <div class="font-semibold">Revenue (key) variables</div>
+          <div class="text-xs text-gray-500 mt-0.5">Biến chính cần test. Mỗi biến tạo 1 model riêng.</div>
+        </div>
+        <input x-model="q2" placeholder="Filter…" class="px-2.5 py-1.5 text-xs border hairline rounded-md w-48 focus-ring">
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        <template x-for="c in cols.filter(c => c.toLowerCase().includes(q2.toLowerCase()))" :key="'rv_' + c">
+          <label class="inline-flex items-center gap-1.5 px-2.5 py-1 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-blue-600 has-[:checked]:text-white has-[:checked]:border-blue-600">
+            <input type="checkbox" :value="c" x-model="cfg.revenue_vars" class="hidden">
+            <span x-text="c"></span>
+          </label>
+        </template>
+      </div>
+    </section>
+
+    <!-- Preprocessing -->
+    <section class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-4">Preprocessing</div>
+
+      <div class="grid grid-cols-2 gap-5 mb-4">
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Winsorize lower</label>
+          <input type="number" step="0.01" x-model.number="cfg.winsorize_limits[0]" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Winsorize upper</label>
+          <input type="number" step="0.01" x-model.number="cfg.winsorize_limits[1]" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+      </div>
+
+      <div class="mb-5">
+        <label class="text-xs font-medium text-gray-700 mb-1.5 block">Winsorize columns</label>
+        <div class="flex flex-wrap gap-1.5">
+          <template x-for="c in cols" :key="'w_' + c">
+            <label class="inline-flex items-center gap-1.5 px-2.5 py-1 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
+              <input type="checkbox" :value="c" x-model="cfg.winsorize_cols" class="hidden">
+              <span x-text="c"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs font-medium text-gray-700 mb-1.5 block">
+          Log transform columns <span class="text-gray-400 font-normal">(tạo cột mới <span class="mono">ln_&lt;col&gt;</span>)</span>
+        </label>
+        <div class="flex flex-wrap gap-1.5">
+          <template x-for="c in cols" :key="'l_' + c">
+            <label class="inline-flex items-center gap-1.5 px-2.5 py-1 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
+              <input type="checkbox" :value="c" x-model="cfg.log_transform_cols" class="hidden">
+              <span x-text="c"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-5 mt-5">
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Base lag (years)</label>
+          <input type="number" x-model.number="cfg.base_lag" min="0" max="3" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Revenue lag (years)</label>
+          <input type="number" x-model.number="cfg.rev_lag" min="0" max="3" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+      </div>
+    </section>
+
+    <!-- Specification -->
+    <section class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-4">Specification</div>
+      <div class="space-y-2.5 text-sm">
+        <label class="flex items-center gap-2.5 cursor-pointer">
+          <input type="checkbox" x-model="cfg.entity_effects" class="rounded">
+          <span>Entity (firm) FE</span>
+          <span class="text-xs text-gray-500">— hấp thụ heterogeneity giữa các firm</span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer">
+          <input type="checkbox" x-model="cfg.time_effects" class="rounded">
+          <span>Time (year) FE</span>
+          <span class="text-xs text-gray-500">— hấp thụ trend chung</span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer">
+          <input type="checkbox" x-model="cfg.industry_effects" class="rounded" :disabled="cfg.entity_effects">
+          <span :class="cfg.entity_effects ? 'text-gray-400' : ''">Industry FE (dummy)</span>
+          <span class="text-xs text-gray-500" x-show="cfg.entity_effects">— bị skip vì collinear với Entity FE</span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer">
+          <input type="checkbox" x-model="cfg.cluster_entity" class="rounded">
+          <span>Cluster SE by firm</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- DID -->
+    <section class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="font-semibold">Difference-in-Differences</div>
+          <div class="text-xs text-gray-500 mt-0.5">Test cú sốc chính sách (vd. CSRD/SFDR 2021)</div>
+        </div>
+        <label class="inline-flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" x-model="cfg.did_enabled" class="rounded">
+          <span class="text-xs text-gray-700">Enable DID</span>
+        </label>
+      </div>
+      <div x-show="cfg.did_enabled" x-cloak class="grid grid-cols-3 gap-5 pt-3 border-t hairline">
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Treatment column</label>
+          <select x-model="cfg.did_treat_col" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+            <option value="">—</option>
+            <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Cutoff method</label>
+          <select x-model="cfg.did_cutoff_method" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+            <option value="median_pre">Median pre-policy</option>
+            <option value="value">Custom value</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Post year (≥)</label>
+          <input type="number" x-model.number="cfg.did_post_year" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+        <div x-show="cfg.did_cutoff_method === 'value'" x-cloak>
+          <label class="text-xs font-medium text-gray-700 mb-1.5 block">Cutoff value</label>
+          <input type="number" step="0.01" x-model.number="cfg.did_cutoff_value" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        </div>
+      </div>
+    </section>
+
+    <!-- Note -->
+    <section class="border hairline rounded-lg p-5">
+      <label class="text-xs font-medium text-gray-700 mb-1.5 block">Note (optional)</label>
+      <input x-model="cfg.note" placeholder="Vd: TESG, EU revenue, full sample 2016-2022" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+    </section>
+
+    <!-- Submit bar -->
+    <div class="flex justify-between items-center sticky bottom-4 bg-white border hairline rounded-lg px-5 py-3 shadow-sm">
+      <button @click="loadDefaults()" class="text-sm text-gray-600 hover:text-gray-900 underline-offset-2 hover:underline">Apply ESG defaults</button>
+      <div class="flex gap-2">
+        <button @click="showJson = !showJson" class="text-sm px-3 py-2 border hairline rounded-md hover:bg-gray-50">
+          <span x-text="showJson ? 'Hide config' : 'View JSON'"></span>
+        </button>
+        <button @click="run()" :disabled="running || !cfg.target"
+                class="bg-gray-900 text-white text-sm font-medium px-6 py-2 rounded-md hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed">
+          <span x-show="!running">Run regression</span>
+          <span x-show="running">Running…</span>
+        </button>
+      </div>
+    </div>
+
+    <pre x-show="showJson" x-cloak class="bg-gray-900 text-gray-100 text-xs p-4 rounded-lg overflow-auto mono leading-relaxed" x-text="JSON.stringify(cfg, null, 2)"></pre>
+  </div>
+</div>
+
+<script>
+function trainPage() {
+  const _init = JSON.parse(document.getElementById('train-init').textContent);
+  return {
+    datasetId: _init.id || '',
+    datasetName: _init.name || '',
+    cols: _init.columns || [],
+    showJson: false,
+    running: false,
+    cfg: {
+      dataset_id: _init.id || '',
+      target: '',
+      base_features: [],
+      revenue_vars: [],
+      winsorize_limits: [0.01, 0.01],
+      winsorize_cols: [],
+      log_transform_cols: [],
+      entity_col: 'COID',
+      time_col: 'Year',
+      industry_col: 'TEJ Industry ID',
+      base_lag: 1,
+      rev_lag: 1,
+      entity_effects: false,
+      time_effects: true,
+      industry_effects: true,
+      cluster_entity: true,
+      year_min: null,
+      year_max: null,
+      did_enabled: false,
+      did_treat_col: '',
+      did_cutoff_method: 'median_pre',
+      did_cutoff_value: null,
+      did_post_year: 2021,
+      models: [],
+      note: ''
+    },
+
+    init() {
+      const has = (c) => this.cols.includes(c);
+      // Auto-detect entity/time
+      if (!has(this.cfg.entity_col)) {
+        this.cfg.entity_col = this.cols.find(c => /id$/i.test(c) || c.toLowerCase().includes('coid')) || this.cols[0] || '';
+      }
+      if (!has(this.cfg.time_col)) {
+        this.cfg.time_col = this.cols.find(c => c.toLowerCase() === 'year') || this.cfg.time_col;
+      }
+      if (!has(this.cfg.industry_col)) {
+        this.cfg.industry_col = this.cols.find(c => c.toLowerCase().includes('industry')) || '';
+      }
+      // Auto-pick target
+      if (has('TESG Score')) this.cfg.target = 'TESG Score';
+      else this.cfg.target = this.cols.find(c => c.toLowerCase().includes('score')) || '';
+    },
+
+    get availableCols() {
+      const ln = this.cfg.log_transform_cols.map(c => 'ln_' + c);
+      return [...this.cols, ...ln.filter(l => !this.cols.includes(l))];
+    },
+
+    loadDefaults() {
+      const has = (c) => this.cols.includes(c);
+      if (has('TESG Score')) this.cfg.target = 'TESG Score';
+      this.cfg.log_transform_cols = ['Total assets'].filter(has);
+      this.cfg.base_features = [
+        'Tobins Q', 'ln_Total assets',
+        'Debt /Equity Ratio', 'ROA-Comprehensive Income',
+        'Foreign Total(% )', 'Export%', 'R&D dummy', 'R&D Expenses Ratio'
+      ].filter(c => this.availableCols.includes(c));
+      this.cfg.revenue_vars = [
+        'Revenue share (EU +US)', 'Revenue share (EU)', 'Revenue share (US)'
+      ].filter(has);
+      this.cfg.winsorize_cols = [
+        'Tobins Q', 'Debt /Equity Ratio', 'ROA-Comprehensive Income',
+        'Foreign Total(% )', 'Export%', 'R&D Expenses Ratio',
+        'Revenue share (EU +US)', 'Revenue share (EU)', 'Revenue share (US)',
+        'TESG Score', 'Environment Score', 'Social Score', 'Governance Score'
+      ].filter(has);
+      window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Defaults applied', kind: 'success' } }));
+    },
+
+    async run() {
+      this.running = true;
+      // Clean cfg
+      const payload = JSON.parse(JSON.stringify(this.cfg));
+      if (payload.industry_col === '') payload.industry_col = null;
+      if (payload.did_treat_col === '') payload.did_treat_col = null;
+      if (payload.year_min === '' || isNaN(payload.year_min)) payload.year_min = null;
+      if (payload.year_max === '' || isNaN(payload.year_max)) payload.year_max = null;
+      const r = await fetch('/api/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      this.running = false;
+      if (r.ok) {
+        const data = await r.json();
+        location.href = '/runs/' + data.run_id;
+      } else {
+        const err = await r.text();
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Error: ' + err.slice(0, 300), kind: 'error' } }));
+      }
+    }
+  }
+}
+</script>
+{% endblock %}
