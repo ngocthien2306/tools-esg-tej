@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: esg-lab
+    runtime: docker
+    plan: starter            # $7/mo — required for persistent disk
+    region: singapore
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: APP_USER
+        value: admin
+      - key: APP_PASSWORD
+        generateValue: true  # Render auto-generates a strong secret
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      name: esg-data
+      mountPath: /var/data
+      sizeGB: 1

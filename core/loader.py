@@ -2,8 +2,7 @@ from pathlib import Path
 import uuid
 import pandas as pd
 
-UPLOADS = Path(__file__).parent.parent / "uploads"
-UPLOADS.mkdir(exist_ok=True)
+from paths import UPLOADS  # re-exported below for callers
 
 
 def save_upload(file_bytes: bytes, original_name: str) -> dict:

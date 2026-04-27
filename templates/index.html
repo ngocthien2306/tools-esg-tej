@@ -5,7 +5,7 @@
   <div class="flex items-end justify-between mb-8">
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">Datasets</h1>
-      <p class="text-sm text-gray-600 mt-1">Upload data và xem cấu trúc. Hỗ trợ Excel (.xlsx, .xls) và CSV.</p>
+      <p class="text-sm text-gray-600 mt-1">Upload data and inspect its structure. Supports Excel (.xlsx, .xls) and CSV.</p>
     </div>
     <label class="cursor-pointer inline-flex items-center gap-2 bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black focus-ring transition-colors">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5a.5.5 0 0 1 .5-.5z"/></svg>
@@ -18,7 +18,7 @@
     <table class="w-full text-sm">
       <thead class="bg-gray-50 border-b hairline">
         <tr class="text-left text-gray-500">
-          <th class="px-4 py-3 font-medium">Tên file</th>
+          <th class="px-4 py-3 font-medium">Filename</th>
           <th class="px-4 py-3 font-medium">Rows</th>
           <th class="px-4 py-3 font-medium">Cols</th>
           <th class="px-4 py-3 font-medium">Source</th>
@@ -47,8 +47,8 @@
         {% endfor %}
         {% if not datasets %}
         <tr><td colspan="6" class="px-4 py-16 text-center text-gray-500 text-sm">
-          <div>Chưa có dataset nào.</div>
-          <div class="text-xs mt-1">Click <span class="font-medium">Upload file</span> ở góc phải để bắt đầu.</div>
+          <div>No datasets yet.</div>
+          <div class="text-xs mt-1">Click <span class="font-medium">Upload file</span> in the top-right to get started.</div>
         </td></tr>
         {% endif %}
       </tbody>
@@ -95,7 +95,7 @@ function datasetsPage() {
       }
     },
     async del(id) {
-      if (!confirm('Xóa dataset này?')) return;
+      if (!confirm('Delete this dataset?')) return;
       await fetch('/api/datasets/' + id, { method: 'DELETE' });
       location.reload();
     }

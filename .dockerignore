@@ -1,0 +1,36 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Local virtualenvs
+.venv
+venv
+env
+
+# Local runtime data — mounted volume on Render, no need in image
+uploads/*
+!uploads/.gitkeep
+runs/*
+!runs/.gitkeep
+tool.db
+tool.db-journal
+*.db-shm
+*.db-wal
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Local data files
+data/
+
+# Docs (don't need in image)
+README.md

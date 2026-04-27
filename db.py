@@ -1,10 +1,9 @@
 import sqlite3
 import json
-from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-DB_PATH = Path(__file__).parent / "tool.db"
+from paths import DB_PATH
 
 
 class DB:
@@ -40,6 +39,11 @@ class DB:
                 note TEXT DEFAULT ''
             );
             """)
+            # Backward-compatible migration: add aliases column if missing
+            try:
+                c.execute("ALTER TABLE datasets ADD COLUMN aliases TEXT DEFAULT '{}'")
+            except sqlite3.OperationalError:
+                pass
 
     def add_dataset(self, info: dict, source: str = "upload"):
         with self._conn() as c:
@@ -59,6 +63,7 @@ class DB:
             for r in rows:
                 d = dict(r)
                 d["columns"] = json.loads(d["columns"])
+                d["aliases"] = json.loads(d.get("aliases") or "{}")
                 result.append(d)
             return result
 
@@ -69,7 +74,13 @@ class DB:
                 return None
             d = dict(row)
             d["columns"] = json.loads(d["columns"])
+            d["aliases"] = json.loads(d.get("aliases") or "{}")
             return d
+
+    def update_aliases(self, dataset_id: str, aliases: dict):
+        with self._conn() as c:
+            c.execute("UPDATE datasets SET aliases=? WHERE id=?",
+                      (json.dumps(aliases), dataset_id))
 
     def delete_dataset(self, dataset_id: str):
         with self._conn() as c:

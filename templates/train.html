@@ -5,12 +5,12 @@
 
 <div x-data="trainPage()" x-init="init()" class="max-w-5xl mx-auto px-8 py-10">
   <h1 class="text-2xl font-semibold tracking-tight">New training run</h1>
-  <p class="text-sm text-gray-600 mt-1 mb-8">Cấu hình panel regression và chạy.</p>
+  <p class="text-sm text-gray-600 mt-1 mb-8">Configure the panel regression and run.</p>
 
   <!-- No dataset chosen yet -->
   <div x-show="!datasetId">
     <div class="border hairline rounded-lg p-5">
-      <div class="font-semibold mb-3">Chọn dataset</div>
+      <div class="font-semibold mb-3">Select a dataset</div>
       {% if datasets %}
       <div class="grid grid-cols-2 gap-2">
         {% for d in datasets %}
@@ -21,7 +21,7 @@
         {% endfor %}
       </div>
       {% else %}
-      <div class="text-sm text-gray-500 py-4">Chưa có dataset. <a href="/" class="underline">Upload</a> file trước.</div>
+      <div class="text-sm text-gray-500 py-4">No dataset yet. <a href="/" class="underline">Upload</a> a file first.</div>
       {% endif %}
     </div>
   </div>
@@ -40,16 +40,19 @@
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Target (dependent variable)</label>
           <select x-model="cfg.target" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
-            <option value="">—</option>
-            <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
+            <template x-for="t in TARGETS" :key="t">
+              <option :value="t" x-text="t"></option>
+            </template>
           </select>
+          <div class="text-[11px] text-gray-500 mt-1.5">Composite or pillar score from TEJ ESG database.</div>
         </div>
       </div>
     </section>
 
     <!-- Panel structure -->
     <section class="border hairline rounded-lg p-5">
-      <div class="font-semibold mb-4">Panel structure</div>
+      <div class="font-semibold mb-1">Panel structure</div>
+      <div class="text-xs text-gray-500 mb-4">Defines the firm × time index used by <span class="mono">PanelOLS</span>.</div>
       <div class="grid grid-cols-3 gap-5">
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Entity column</label>
@@ -74,12 +77,30 @@
       <div class="grid grid-cols-2 gap-5 mt-4">
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Year min (optional)</label>
-          <input type="number" x-model.number="cfg.year_min" placeholder="auto" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" min="1900" max="2100" step="1" inputmode="numeric"
+                 x-model.number="cfg.year_min"
+                 @blur="cfg.year_min = sanitizeYear($event.target.value)"
+                 placeholder="auto"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
         </div>
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Year max (optional)</label>
-          <input type="number" x-model.number="cfg.year_max" placeholder="auto" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" min="1900" max="2100" step="1" inputmode="numeric"
+                 x-model.number="cfg.year_max"
+                 @blur="cfg.year_max = sanitizeYear($event.target.value)"
+                 placeholder="auto"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
         </div>
+      </div>
+
+      <!-- Live validation -->
+      <div class="mt-4 px-3 py-2.5 rounded-md text-xs flex items-start gap-2"
+           :class="panelValid ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'">
+        <svg class="w-3.5 h-3.5 mt-0.5 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+          <path x-show="panelValid" d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+          <path x-show="!panelValid" d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+        </svg>
+        <div x-text="panelMessage"></div>
       </div>
     </section>
 
@@ -88,7 +109,7 @@
       <div class="flex items-center justify-between mb-3">
         <div>
           <div class="font-semibold">Base features</div>
-          <div class="text-xs text-gray-500 mt-0.5">Biến control (firm characteristics). Sẽ được lag <span class="mono" x-text="cfg.base_lag"></span> năm.</div>
+          <div class="text-xs text-gray-500 mt-0.5">Firm-level controls. All variables are lagged by <span class="mono" x-text="cfg.base_lag"></span> year(s).</div>
         </div>
         <input x-model="q1" placeholder="Filter…" class="px-2.5 py-1.5 text-xs border hairline rounded-md w-48 focus-ring">
       </div>
@@ -104,7 +125,7 @@
       <div class="flex items-center justify-between mb-3 mt-7">
         <div>
           <div class="font-semibold">Revenue (key) variables</div>
-          <div class="text-xs text-gray-500 mt-0.5">Biến chính cần test. Mỗi biến tạo 1 model riêng.</div>
+          <div class="text-xs text-gray-500 mt-0.5">Variables of interest. One model is generated per variable (in addition to the base model).</div>
         </div>
         <input x-model="q2" placeholder="Filter…" class="px-2.5 py-1.5 text-xs border hairline rounded-md w-48 focus-ring">
       </div>
@@ -118,20 +139,69 @@
       </div>
     </section>
 
+    <!-- Sample filtering -->
+    <section class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-1">Sample filtering</div>
+      <div class="text-xs text-gray-500 mb-4">
+        Many firms have <span class="mono">Revenue share = 0</span> for a given region. Including them in the regression dilutes the regional effect.
+        This option lets revenue models restrict to firms with positive exposure.
+      </div>
+      <div class="space-y-2">
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md transition-colors"
+               :class="cfg.sample_filter_mode === 'none' ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'">
+          <input type="radio" value="none" x-model="cfg.sample_filter_mode" class="mt-0.5">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Full sample</div>
+            <div class="text-xs mt-0.5" :class="cfg.sample_filter_mode === 'none' ? 'opacity-80' : 'text-gray-600'">
+              Keep every firm-year, including rows where the revenue variable is 0. This is the broadest sample but mixes firms with and without exposure.
+            </div>
+          </div>
+        </label>
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md transition-colors"
+               :class="cfg.sample_filter_mode === 'positive' ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'">
+          <input type="radio" value="positive" x-model="cfg.sample_filter_mode" class="mt-0.5">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Subsample (revenue &gt; 0)</div>
+            <div class="text-xs mt-0.5" :class="cfg.sample_filter_mode === 'positive' ? 'opacity-80' : 'text-gray-600'">
+              For each revenue model, drop firm-years where that revenue variable is 0. Isolates the effect among firms that actually export to the region.
+            </div>
+          </div>
+        </label>
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md transition-colors"
+               :class="cfg.sample_filter_mode === 'compare_both' ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'">
+          <input type="radio" value="compare_both" x-model="cfg.sample_filter_mode" class="mt-0.5">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Compare both (full + filtered)</div>
+            <div class="text-xs mt-0.5" :class="cfg.sample_filter_mode === 'compare_both' ? 'opacity-80' : 'text-gray-600'">
+              Generate two models per revenue variable — one on the full sample and one filtered to <span class="mono">&gt; 0</span>. Useful for robustness checks but doubles the model count.
+            </div>
+          </div>
+        </label>
+      </div>
+    </section>
+
     <!-- Preprocessing -->
     <section class="border hairline rounded-lg p-5">
-      <div class="font-semibold mb-4">Preprocessing</div>
+      <div class="font-semibold mb-1">Preprocessing</div>
+      <div class="text-xs text-gray-500 mb-4">Outlier trimming, log scaling, and lag construction.</div>
 
-      <div class="grid grid-cols-2 gap-5 mb-4">
+      <div class="grid grid-cols-2 gap-5 mb-2">
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Winsorize lower</label>
-          <input type="number" step="0.01" x-model.number="cfg.winsorize_limits[0]" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" step="0.01" min="0" max="0.49" inputmode="decimal"
+                 x-model.number="cfg.winsorize_limits[0]"
+                 @blur="cfg.winsorize_limits[0] = clampFloat($event.target.value, 0, 0.49, 0.01)"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
         </div>
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Winsorize upper</label>
-          <input type="number" step="0.01" x-model.number="cfg.winsorize_limits[1]" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" step="0.01" min="0" max="0.49" inputmode="decimal"
+                 x-model.number="cfg.winsorize_limits[1]"
+                 @blur="cfg.winsorize_limits[1] = clampFloat($event.target.value, 0, 0.49, 0.01)"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
         </div>
       </div>
+      <div class="text-[11px] text-gray-500 mb-5">Default <span class="mono">[0.01, 0.01]</span> caps the bottom 1% and top 1% of each selected column to reduce outlier influence.</div>
 
       <div class="mb-5">
         <label class="text-xs font-medium text-gray-700 mb-1.5 block">Winsorize columns</label>
@@ -147,7 +217,7 @@
 
       <div>
         <label class="text-xs font-medium text-gray-700 mb-1.5 block">
-          Log transform columns <span class="text-gray-400 font-normal">(tạo cột mới <span class="mono">ln_&lt;col&gt;</span>)</span>
+          Log transform columns <span class="text-gray-400 font-normal">— creates new column <span class="mono">ln_&lt;col&gt;</span></span>
         </label>
         <div class="flex flex-wrap gap-1.5">
           <template x-for="c in cols" :key="'l_' + c">
@@ -157,65 +227,98 @@
             </label>
           </template>
         </div>
+        <div class="text-[11px] text-gray-500 mt-2">Typically applied to size variables (e.g. <span class="mono">Total assets</span>) to reduce skewness.</div>
       </div>
 
       <div class="grid grid-cols-2 gap-5 mt-5">
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Base lag (years)</label>
-          <input type="number" x-model.number="cfg.base_lag" min="0" max="3" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" min="0" max="3" step="1" inputmode="numeric"
+                 x-model.number="cfg.base_lag"
+                 @blur="cfg.base_lag = clampInt($event.target.value, 0, 3, 1)"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <div class="text-[11px] text-gray-500 mt-1">Apply <span class="mono">t-k</span> to base features. Set to 1 to break simultaneity between ESG and firm characteristics.</div>
         </div>
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Revenue lag (years)</label>
-          <input type="number" x-model.number="cfg.rev_lag" min="0" max="3" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" min="0" max="3" step="1" inputmode="numeric"
+                 x-model.number="cfg.rev_lag"
+                 @blur="cfg.rev_lag = clampInt($event.target.value, 0, 3, 1)"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <div class="text-[11px] text-gray-500 mt-1">Apply <span class="mono">t-k</span> to revenue variables. Lagging tests whether past market exposure predicts future ESG.</div>
         </div>
       </div>
     </section>
 
     <!-- Specification -->
     <section class="border hairline rounded-lg p-5">
-      <div class="font-semibold mb-4">Specification</div>
-      <div class="space-y-2.5 text-sm">
-        <label class="flex items-center gap-2.5 cursor-pointer">
-          <input type="checkbox" x-model="cfg.entity_effects" class="rounded">
-          <span>Entity (firm) FE</span>
-          <span class="text-xs text-gray-500">— hấp thụ heterogeneity giữa các firm</span>
+      <div class="font-semibold mb-1">Specification</div>
+      <div class="text-xs text-gray-500 mb-4">Fixed effects absorb unobserved heterogeneity; clustered SE handle within-firm correlation.</div>
+
+      <div class="space-y-3.5">
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md hover:bg-gray-50">
+          <input type="checkbox" x-model="cfg.entity_effects" class="rounded mt-0.5">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Entity (firm) FE</div>
+            <div class="text-xs text-gray-600 mt-0.5">
+              Adds a separate intercept for every firm so the model only uses <em>within-firm</em> variation over time. Absorbs all time-invariant traits (industry, founding decade, governance culture, …) — even unobserved ones. Use it when you want the strictest control for omitted variables. Disables the Industry FE option below since they would be collinear.
+            </div>
+          </div>
         </label>
-        <label class="flex items-center gap-2.5 cursor-pointer">
-          <input type="checkbox" x-model="cfg.time_effects" class="rounded">
-          <span>Time (year) FE</span>
-          <span class="text-xs text-gray-500">— hấp thụ trend chung</span>
+
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md hover:bg-gray-50">
+          <input type="checkbox" x-model="cfg.time_effects" class="rounded mt-0.5">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Time (year) FE</div>
+            <div class="text-xs text-gray-600 mt-0.5">
+              Adds a dummy for each year so common shocks (macro cycles, regulatory changes, COVID) are absorbed. Without this, a generic upward ESG trend could be misattributed to revenue or other regressors. Almost always recommended.
+            </div>
+          </div>
         </label>
-        <label class="flex items-center gap-2.5 cursor-pointer">
-          <input type="checkbox" x-model="cfg.industry_effects" class="rounded" :disabled="cfg.entity_effects">
-          <span :class="cfg.entity_effects ? 'text-gray-400' : ''">Industry FE (dummy)</span>
-          <span class="text-xs text-gray-500" x-show="cfg.entity_effects">— bị skip vì collinear với Entity FE</span>
+
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md hover:bg-gray-50"
+               :class="cfg.entity_effects ? 'opacity-50' : ''">
+          <input type="checkbox" x-model="cfg.industry_effects" class="rounded mt-0.5" :disabled="cfg.entity_effects">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Industry FE (dummy variables)</div>
+            <div class="text-xs text-gray-600 mt-0.5">
+              Adds one dummy per industry (drop-first encoding) using the column selected above. Lighter than firm FE: controls for sector-level differences (capital intensity, regulatory exposure) while still letting between-firm variation identify the coefficients. Skipped automatically when Entity FE is on.
+            </div>
+          </div>
         </label>
-        <label class="flex items-center gap-2.5 cursor-pointer">
-          <input type="checkbox" x-model="cfg.cluster_entity" class="rounded">
-          <span>Cluster SE by firm</span>
+
+        <label class="flex items-start gap-3 cursor-pointer p-3 border hairline rounded-md hover:bg-gray-50">
+          <input type="checkbox" x-model="cfg.cluster_entity" class="rounded mt-0.5">
+          <div class="flex-1">
+            <div class="text-sm font-medium">Cluster SE by firm</div>
+            <div class="text-xs text-gray-600 mt-0.5">
+              Computes standard errors that allow residuals to be correlated within the same firm across years (panel autocorrelation + heteroskedasticity). Produces honest <span class="mono">p</span>-values; without clustering, t-stats are typically too large. Standard practice for firm-year panel data.
+            </div>
+          </div>
         </label>
       </div>
     </section>
 
     <!-- DID -->
     <section class="border hairline rounded-lg p-5">
-      <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center justify-between mb-1">
         <div>
           <div class="font-semibold">Difference-in-Differences</div>
-          <div class="text-xs text-gray-500 mt-0.5">Test cú sốc chính sách (vd. CSRD/SFDR 2021)</div>
+          <div class="text-xs text-gray-500 mt-0.5">Test the causal effect of a policy shock (e.g. EU CSRD/SFDR taking effect in 2021).</div>
         </div>
         <label class="inline-flex items-center gap-2 cursor-pointer">
           <input type="checkbox" x-model="cfg.did_enabled" class="rounded">
           <span class="text-xs text-gray-700">Enable DID</span>
         </label>
       </div>
-      <div x-show="cfg.did_enabled" x-cloak class="grid grid-cols-3 gap-5 pt-3 border-t hairline">
+      <div x-show="cfg.did_enabled" x-cloak class="grid grid-cols-3 gap-5 pt-4 mt-3 border-t hairline">
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Treatment column</label>
           <select x-model="cfg.did_treat_col" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
             <option value="">—</option>
             <template x-for="c in cols" :key="c"><option :value="c" x-text="c"></option></template>
           </select>
+          <div class="text-[11px] text-gray-500 mt-1">Variable used to split firms into high vs. low exposure (e.g. Revenue share (EU)).</div>
         </div>
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Cutoff method</label>
@@ -223,14 +326,22 @@
             <option value="median_pre">Median pre-policy</option>
             <option value="value">Custom value</option>
           </select>
+          <div class="text-[11px] text-gray-500 mt-1">Median pre-policy avoids contaminating the cutoff with post-treatment data.</div>
         </div>
         <div>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Post year (≥)</label>
-          <input type="number" x-model.number="cfg.did_post_year" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" min="1900" max="2100" step="1" inputmode="numeric"
+                 x-model.number="cfg.did_post_year"
+                 @blur="cfg.did_post_year = clampInt($event.target.value, 1900, 2100, 2021)"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <div class="text-[11px] text-gray-500 mt-1">First year considered "post-treatment".</div>
         </div>
         <div x-show="cfg.did_cutoff_method === 'value'" x-cloak>
           <label class="text-xs font-medium text-gray-700 mb-1.5 block">Cutoff value</label>
-          <input type="number" step="0.01" x-model.number="cfg.did_cutoff_value" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+          <input type="number" step="0.01" inputmode="decimal"
+                 x-model.number="cfg.did_cutoff_value"
+                 @blur="cfg.did_cutoff_value = sanitizeFloat($event.target.value)"
+                 class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
         </div>
       </div>
     </section>
@@ -238,17 +349,25 @@
     <!-- Note -->
     <section class="border hairline rounded-lg p-5">
       <label class="text-xs font-medium text-gray-700 mb-1.5 block">Note (optional)</label>
-      <input x-model="cfg.note" placeholder="Vd: TESG, EU revenue, full sample 2016-2022" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+      <input x-model="cfg.note" placeholder="e.g. TESG, EU revenue, full sample 2016-2022" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
     </section>
+
+    <!-- Validation errors -->
+    <div x-show="formErrors.length > 0" x-cloak class="border border-red-200 bg-red-50 rounded-lg px-4 py-3">
+      <div class="text-xs font-semibold text-red-800 mb-1.5">Please fix the following before running:</div>
+      <ul class="text-xs text-red-700 list-disc list-inside space-y-0.5">
+        <template x-for="e in formErrors" :key="e"><li x-text="e"></li></template>
+      </ul>
+    </div>
 
     <!-- Submit bar -->
     <div class="flex justify-between items-center sticky bottom-4 bg-white border hairline rounded-lg px-5 py-3 shadow-sm">
-      <button @click="loadDefaults()" class="text-sm text-gray-600 hover:text-gray-900 underline-offset-2 hover:underline">Apply ESG defaults</button>
+      <button @click="loadDefaults()" class="text-sm text-gray-600 hover:text-gray-900 underline-offset-2 hover:underline">Re-apply ESG defaults</button>
       <div class="flex gap-2">
         <button @click="showJson = !showJson" class="text-sm px-3 py-2 border hairline rounded-md hover:bg-gray-50">
           <span x-text="showJson ? 'Hide config' : 'View JSON'"></span>
         </button>
-        <button @click="run()" :disabled="running || !cfg.target"
+        <button @click="run()" :disabled="running || !cfg.target || !panelValid || formErrors.length > 0"
                 class="bg-gray-900 text-white text-sm font-medium px-6 py-2 rounded-md hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed">
           <span x-show="!running">Run regression</span>
           <span x-show="running">Running…</span>
@@ -263,7 +382,25 @@
 <script>
 function trainPage() {
   const _init = JSON.parse(document.getElementById('train-init').textContent);
+  const TARGETS = ["TESG Score", "Environment Score", "Social Score", "Governance Score"];
+  const DEFAULT_BASE = [
+    'Tobins Q', 'ln_Total assets',
+    'Debt /Equity Ratio', 'ROA-Comprehensive Income',
+    'Foreign Total(% )', 'Export%', 'R&D dummy', 'R&D Expenses Ratio'
+  ];
+  const DEFAULT_REVENUE = [
+    'Revenue share (EU +US)', 'Revenue share (EU)', 'Revenue share (US)'
+  ];
+  const DEFAULT_WINSORIZE = [
+    'Tobins Q', 'Debt /Equity Ratio', 'ROA-Comprehensive Income',
+    'Foreign Total(% )', 'Export%', 'R&D Expenses Ratio',
+    'Revenue share (EU +US)', 'Revenue share (EU)', 'Revenue share (US)',
+    'TESG Score', 'Environment Score', 'Social Score', 'Governance Score'
+  ];
+  const DEFAULT_LOG = ['Total assets'];
+
   return {
+    TARGETS,
     datasetId: _init.id || '',
     datasetName: _init.name || '',
     cols: _init.columns || [],
@@ -271,7 +408,7 @@ function trainPage() {
     running: false,
     cfg: {
       dataset_id: _init.id || '',
-      target: '',
+      target: 'TESG Score',
       base_features: [],
       revenue_vars: [],
       winsorize_limits: [0.01, 0.01],
@@ -293,25 +430,27 @@ function trainPage() {
       did_cutoff_method: 'median_pre',
       did_cutoff_value: null,
       did_post_year: 2021,
+      sample_filter_mode: 'none',
       models: [],
       note: ''
     },
 
     init() {
-      const has = (c) => this.cols.includes(c);
-      // Auto-detect entity/time
-      if (!has(this.cfg.entity_col)) {
-        this.cfg.entity_col = this.cols.find(c => /id$/i.test(c) || c.toLowerCase().includes('coid')) || this.cols[0] || '';
-      }
-      if (!has(this.cfg.time_col)) {
-        this.cfg.time_col = this.cols.find(c => c.toLowerCase() === 'year') || this.cfg.time_col;
-      }
-      if (!has(this.cfg.industry_col)) {
-        this.cfg.industry_col = this.cols.find(c => c.toLowerCase().includes('industry')) || '';
-      }
-      // Auto-pick target
-      if (has('TESG Score')) this.cfg.target = 'TESG Score';
-      else this.cfg.target = this.cols.find(c => c.toLowerCase().includes('score')) || '';
+      if (!this.cols.length) return;
+      // Always auto-detect — don't trust default cfg values blindly
+      const entity = this.cols.find(c => /^coid$/i.test(c))
+                  || this.cols.find(c => /id$/i.test(c) && !/industry/i.test(c))
+                  || this.cols[0];
+      const time = this.cols.find(c => /^year$/i.test(c))
+                || this.cols.find(c => /year/i.test(c))
+                || this.cols.find(c => /^date$/i.test(c))
+                || this.cols[1] || this.cols[0];
+      const industry = this.cols.find(c => /industry/i.test(c)) || '';
+      this.cfg.entity_col = entity;
+      this.cfg.time_col = time;
+      this.cfg.industry_col = industry;
+      // Auto-apply ESG defaults
+      this.loadDefaults({ silent: true });
     },
 
     get availableCols() {
@@ -319,30 +458,89 @@ function trainPage() {
       return [...this.cols, ...ln.filter(l => !this.cols.includes(l))];
     },
 
-    loadDefaults() {
+    // ── Numeric sanitizers (used in @blur) ───────────────────────────────────
+    clampFloat(v, lo, hi, fallback) {
+      const n = Number(v);
+      if (v === '' || v === null || v === undefined || isNaN(n)) return fallback;
+      return Math.max(lo, Math.min(hi, n));
+    },
+    clampInt(v, lo, hi, fallback) {
+      const n = parseInt(v, 10);
+      if (isNaN(n)) return fallback;
+      return Math.max(lo, Math.min(hi, n));
+    },
+    sanitizeYear(v) {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1900 || n > 2100) return null;
+      return n;
+    },
+    sanitizeFloat(v) {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    },
+
+    // ── Validation getters ───────────────────────────────────────────────────
+    get formErrors() {
+      const errs = [];
+      const lo = this.cfg.winsorize_limits[0];
+      const hi = this.cfg.winsorize_limits[1];
+      if (typeof lo !== 'number' || isNaN(lo) || lo < 0 || lo >= 0.5) errs.push('Winsorize lower must be a number in [0, 0.5).');
+      if (typeof hi !== 'number' || isNaN(hi) || hi < 0 || hi >= 0.5) errs.push('Winsorize upper must be a number in [0, 0.5).');
+      if (typeof lo === 'number' && typeof hi === 'number' && lo + hi >= 1) errs.push('Winsorize lower + upper must be < 1.');
+      if (!Number.isInteger(this.cfg.base_lag) || this.cfg.base_lag < 0 || this.cfg.base_lag > 3) errs.push('Base lag must be an integer in [0, 3].');
+      if (!Number.isInteger(this.cfg.rev_lag) || this.cfg.rev_lag < 0 || this.cfg.rev_lag > 3) errs.push('Revenue lag must be an integer in [0, 3].');
+      if (this.cfg.year_min !== null && this.cfg.year_min !== undefined && (!Number.isInteger(this.cfg.year_min) || this.cfg.year_min < 1900 || this.cfg.year_min > 2100)) errs.push('Year min must be an integer year (or empty).');
+      if (this.cfg.year_max !== null && this.cfg.year_max !== undefined && (!Number.isInteger(this.cfg.year_max) || this.cfg.year_max < 1900 || this.cfg.year_max > 2100)) errs.push('Year max must be an integer year (or empty).');
+      if (this.cfg.year_min !== null && this.cfg.year_max !== null && this.cfg.year_min > this.cfg.year_max) errs.push('Year min must be ≤ Year max.');
+      if (this.cfg.did_enabled) {
+        if (!Number.isInteger(this.cfg.did_post_year) || this.cfg.did_post_year < 1900 || this.cfg.did_post_year > 2100) errs.push('DID post year must be an integer year.');
+        if (this.cfg.did_cutoff_method === 'value' && (this.cfg.did_cutoff_value === null || typeof this.cfg.did_cutoff_value !== 'number' || isNaN(this.cfg.did_cutoff_value))) errs.push('DID custom cutoff must be a number.');
+        if (!this.cfg.did_treat_col) errs.push('DID treatment column is required when DID is enabled.');
+      }
+      return errs;
+    },
+
+    get panelValid() {
+      return this.cfg.entity_col
+          && this.cfg.time_col
+          && this.cfg.entity_col !== this.cfg.time_col
+          && this.cols.includes(this.cfg.entity_col)
+          && this.cols.includes(this.cfg.time_col);
+    },
+
+    get panelMessage() {
+      if (!this.cfg.entity_col || !this.cfg.time_col) {
+        return 'Pick both entity and time columns to define the panel.';
+      }
+      if (this.cfg.entity_col === this.cfg.time_col) {
+        return `Entity and time columns must be different (both set to ${this.cfg.entity_col}).`;
+      }
+      if (!this.cols.includes(this.cfg.entity_col)) {
+        return `Entity column "${this.cfg.entity_col}" not found in dataset.`;
+      }
+      if (!this.cols.includes(this.cfg.time_col)) {
+        return `Time column "${this.cfg.time_col}" not found in dataset.`;
+      }
+      return `Panel index: ${this.cfg.entity_col} × ${this.cfg.time_col}` +
+             (this.cfg.industry_col ? ` · industry FE on ${this.cfg.industry_col}` : ' · no industry column');
+    },
+
+    loadDefaults(opts = {}) {
       const has = (c) => this.cols.includes(c);
-      if (has('TESG Score')) this.cfg.target = 'TESG Score';
-      this.cfg.log_transform_cols = ['Total assets'].filter(has);
-      this.cfg.base_features = [
-        'Tobins Q', 'ln_Total assets',
-        'Debt /Equity Ratio', 'ROA-Comprehensive Income',
-        'Foreign Total(% )', 'Export%', 'R&D dummy', 'R&D Expenses Ratio'
-      ].filter(c => this.availableCols.includes(c));
-      this.cfg.revenue_vars = [
-        'Revenue share (EU +US)', 'Revenue share (EU)', 'Revenue share (US)'
-      ].filter(has);
-      this.cfg.winsorize_cols = [
-        'Tobins Q', 'Debt /Equity Ratio', 'ROA-Comprehensive Income',
-        'Foreign Total(% )', 'Export%', 'R&D Expenses Ratio',
-        'Revenue share (EU +US)', 'Revenue share (EU)', 'Revenue share (US)',
-        'TESG Score', 'Environment Score', 'Social Score', 'Governance Score'
-      ].filter(has);
-      window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Defaults applied', kind: 'success' } }));
+      this.cfg.log_transform_cols = DEFAULT_LOG.filter(has);
+      const avail = new Set([...this.cols, ...this.cfg.log_transform_cols.map(c => 'ln_' + c)]);
+      this.cfg.base_features = DEFAULT_BASE.filter(c => avail.has(c));
+      this.cfg.revenue_vars = DEFAULT_REVENUE.filter(has);
+      this.cfg.winsorize_cols = DEFAULT_WINSORIZE.filter(has);
+      if (!opts.silent) {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Defaults applied', kind: 'success' } }));
+      }
     },
 
     async run() {
       this.running = true;
-      // Clean cfg
       const payload = JSON.parse(JSON.stringify(this.cfg));
       if (payload.industry_col === '') payload.industry_col = null;
       if (payload.did_treat_col === '') payload.did_treat_col = null;

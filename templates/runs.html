@@ -5,7 +5,7 @@
   <div class="flex items-end justify-between mb-8">
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">Runs</h1>
-      <p class="text-sm text-gray-600 mt-1">Lịch sử các lần training.</p>
+      <p class="text-sm text-gray-600 mt-1">History of all training runs.</p>
     </div>
     <a href="/train" class="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black">New run</a>
   </div>
@@ -36,8 +36,8 @@
         {% endfor %}
         {% if not runs %}
         <tr><td colspan="5" class="px-4 py-16 text-center text-gray-500 text-sm">
-          <div>Chưa có run nào.</div>
-          <div class="text-xs mt-1">Click <a href="/train" class="underline">New run</a> để chạy training đầu tiên.</div>
+          <div>No runs yet.</div>
+          <div class="text-xs mt-1">Click <a href="/train" class="underline">New run</a> to launch your first training.</div>
         </td></tr>
         {% endif %}
       </tbody>

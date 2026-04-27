@@ -68,7 +68,7 @@
       <div class="flex items-center justify-between mb-3">
         <div>
           <div class="font-semibold">Trend over time</div>
-          <div class="text-xs text-gray-500">Mean theo từng năm</div>
+          <div class="text-xs text-gray-500">Yearly mean of the selected variable</div>
         </div>
         <select x-model="tsCol" @change="renderTs()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
           <template x-for="c in tsCols" :key="c">
@@ -82,7 +82,7 @@
     <!-- Panel structure preview if available -->
     <div class="border hairline rounded-lg p-5" x-show="profile?.panel">
       <div class="font-semibold mb-1">Panel structure</div>
-      <div class="text-xs text-gray-500 mb-3">Tự nhận diện dựa trên cột entity/time mặc định (COID × Year).</div>
+      <div class="text-xs text-gray-500 mb-3">Auto-detected from the default entity/time columns (COID × Year).</div>
       <dl class="grid grid-cols-3 gap-4 text-sm">
         <div>
           <dt class="text-xs text-gray-500">Entity column</dt>
@@ -95,7 +95,7 @@
         <div>
           <dt class="text-xs text-gray-500">Status</dt>
           <dd class="font-medium mt-0.5" :class="profile?.panel?.balanced ? 'text-emerald-600' : 'text-amber-600'"
-              x-text="profile?.panel?.balanced ? 'Balanced' : 'Unbalanced — một số firm thiếu năm'"></dd>
+              x-text="profile?.panel?.balanced ? 'Balanced' : 'Unbalanced — some firms are missing years'"></dd>
         </div>
       </dl>
     </div>
@@ -103,11 +103,17 @@
 
   <!-- Columns -->
   <div x-show="!loading && tab === 'columns'" x-cloak>
-    <div class="mb-4 flex items-center justify-between">
-      <input x-model="colSearch" placeholder="Tìm cột..." class="border hairline rounded-md px-3 py-2 text-sm w-72 focus-ring">
-      <div class="text-xs text-gray-500">
-        <span x-text="filteredCols.length"></span> / <span x-text="profile?.columns?.length"></span> cols
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <input x-model="colSearch" placeholder="Search columns..." class="border hairline rounded-md px-3 py-2 text-sm w-72 focus-ring">
+      <div class="flex items-center gap-3 text-xs text-gray-500">
+        <span><span x-text="filteredCols.length"></span> / <span x-text="profile?.columns?.length"></span> cols</span>
+        <span class="text-gray-300">·</span>
+        <span><span x-text="Object.keys(aliases).length"></span> renamed</span>
+        <button x-show="Object.keys(aliases).length > 0" @click="resetAliases()" class="text-gray-600 hover:text-red-600">Reset all renames</button>
       </div>
+    </div>
+    <div class="text-xs text-gray-500 mb-3">
+      Click a column name to rename it — aliases persist for this dataset and show up in dropdowns across the app. Original names are kept internally so regression configs still work.
     </div>
     <div class="border hairline rounded-lg overflow-hidden">
       <table class="w-full text-sm">
@@ -127,7 +133,22 @@
         <tbody>
           <template x-for="c in filteredCols" :key="c.name">
             <tr class="border-b hairline last:border-b-0 hover:bg-gray-50/50">
-              <td class="px-4 py-2.5 font-medium" x-text="c.name"></td>
+              <td class="px-4 py-2.5">
+                <div x-show="editing !== c.name" class="cursor-pointer" @click="startEdit(c.name)">
+                  <span class="font-medium" x-text="aliases[c.name] || c.name"></span>
+                  <span x-show="aliases[c.name]" class="text-[11px] text-gray-400 mono ml-1.5" x-text="'(' + c.name + ')'"></span>
+                  <span x-show="!aliases[c.name]" class="text-[11px] text-gray-300 ml-1.5">edit ✎</span>
+                </div>
+                <div x-show="editing === c.name" x-cloak class="flex gap-1 items-center">
+                  <input :value="aliases[c.name] || c.name"
+                         @keydown.enter="saveAlias(c.name, $event.target.value); editing = null"
+                         @keydown.escape="editing = null"
+                         @click.stop x-init="$nextTick(() => $el.select())"
+                         class="border hairline rounded-md px-2 py-1 text-xs flex-1 focus-ring">
+                  <button @click="saveAlias(c.name, $event.target.previousElementSibling.value); editing = null" class="text-xs px-2 py-1 bg-gray-900 text-white rounded">✓</button>
+                  <button @click="editing = null" class="text-xs px-2 py-1 border hairline rounded">×</button>
+                </div>
+              </td>
               <td class="px-4 py-2.5 text-gray-600 mono text-xs" x-text="c.dtype"></td>
               <td class="px-4 py-2.5">
                 <span :class="c.pct_missing > 30 ? 'text-red-600 font-semibold' : (c.pct_missing > 5 ? 'text-amber-600' : 'text-gray-500')"
@@ -146,11 +167,577 @@
     </div>
   </div>
 
+  <!-- Distributions -->
+  <div x-show="!loading && tab === 'distributions'" x-cloak class="space-y-5">
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="font-semibold">Distribution explorer</div>
+          <div class="text-xs text-gray-500 mt-0.5">Histogram, boxplot, skewness, and zero/missing breakdown for one column.</div>
+        </div>
+        <select x-model="distCol" @change="loadDist()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring min-w-[14rem]">
+          <option value="">— Select column —</option>
+          <template x-for="c in numericCols" :key="c"><option :value="c" x-text="c"></option></template>
+        </select>
+      </div>
+
+      <div x-show="!dist" class="text-xs text-gray-500 py-12 text-center">Pick a numeric column above.</div>
+
+      <template x-if="dist && dist.type === 'numeric'">
+        <div>
+          <!-- Stats grid -->
+          <div class="grid grid-cols-6 gap-2 mb-5 text-xs">
+            <div class="p-2.5 border hairline rounded-md">
+              <div class="text-gray-500">N total</div>
+              <div class="font-semibold mt-0.5" x-text="dist.n_total.toLocaleString()"></div>
+            </div>
+            <div class="p-2.5 border hairline rounded-md">
+              <div class="text-gray-500">Missing</div>
+              <div class="font-semibold mt-0.5" x-text="dist.n_missing.toLocaleString() + ' (' + ((dist.n_missing/dist.n_total*100).toFixed(1)) + '%)'"></div>
+            </div>
+            <div class="p-2.5 border hairline rounded-md" :class="dist.n_zero / dist.n_total > 0.3 ? 'bg-amber-50 border-amber-300' : ''">
+              <div class="text-gray-500">Zeros</div>
+              <div class="font-semibold mt-0.5" x-text="dist.n_zero.toLocaleString() + ' (' + ((dist.n_zero/dist.n_total*100).toFixed(1)) + '%)'"></div>
+            </div>
+            <div class="p-2.5 border hairline rounded-md">
+              <div class="text-gray-500">Negative</div>
+              <div class="font-semibold mt-0.5" x-text="dist.n_neg.toLocaleString()"></div>
+            </div>
+            <div class="p-2.5 border hairline rounded-md" :class="Math.abs(dist.stats.skew) > 2 ? 'bg-amber-50 border-amber-300' : ''">
+              <div class="text-gray-500">Skewness</div>
+              <div class="font-semibold mt-0.5 mono" x-text="dist.stats.skew.toFixed(2)"></div>
+            </div>
+            <div class="p-2.5 border hairline rounded-md" :class="dist.stats.kurt > 7 ? 'bg-amber-50 border-amber-300' : ''">
+              <div class="text-gray-500">Kurtosis</div>
+              <div class="font-semibold mt-0.5 mono" x-text="dist.stats.kurt.toFixed(2)"></div>
+            </div>
+          </div>
+
+          <!-- Hints -->
+          <div class="space-y-1 mb-5" x-show="distHints.length > 0">
+            <template x-for="h in distHints" :key="h">
+              <div class="px-3 py-2 rounded-md text-xs bg-amber-50 text-amber-800 border border-amber-200" x-text="h"></div>
+            </template>
+          </div>
+
+          <!-- Charts -->
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-xs font-medium text-gray-700 mb-2">Histogram</div>
+              <div id="dist-hist" style="height:280px"></div>
+            </div>
+            <div>
+              <div class="text-xs font-medium text-gray-700 mb-2">Boxplot (with 1st/99th percentile)</div>
+              <div id="dist-box" style="height:280px"></div>
+            </div>
+          </div>
+
+          <!-- Quartile table -->
+          <div class="grid grid-cols-7 gap-2 mt-5 text-xs">
+            <template x-for="kv in [['min','min'],['1%','p01'],['25%','p25'],['median','median'],['75%','p75'],['99%','p99'],['max','max']]" :key="kv[1]">
+              <div class="p-2.5 border hairline rounded-md">
+                <div class="text-gray-500" x-text="kv[0]"></div>
+                <div class="font-semibold mono mt-0.5" x-text="dist.stats[kv[1]].toFixed(3)"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="dist && dist.type === 'categorical'">
+        <div>
+          <div class="text-xs text-gray-500 mb-3">Categorical column. Top values:</div>
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b hairline text-left text-gray-500">
+              <tr><th class="px-3 py-2 font-medium">Value</th><th class="px-3 py-2 font-medium text-right">Count</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="vc in dist.value_counts" :key="vc.value">
+                <tr class="border-b hairline">
+                  <td class="px-3 py-1.5 mono text-xs" x-text="vc.value"></td>
+                  <td class="px-3 py-1.5 mono text-xs text-right" x-text="vc.count.toLocaleString()"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div x-show="!loading && tab === 'panel'" x-cloak class="space-y-5">
+    <div x-show="!panelData" class="text-sm text-gray-500 py-12 text-center">Loading panel analytics…</div>
+
+    <template x-if="panelData && !panelData.error">
+      <div class="space-y-5">
+        <!-- KPIs -->
+        <div class="grid grid-cols-5 gap-3">
+          <div class="border hairline rounded-lg p-4">
+            <div class="text-xs text-gray-500">Firms</div>
+            <div class="text-2xl font-semibold mt-1" x-text="panelData.n_firms.toLocaleString()"></div>
+          </div>
+          <div class="border hairline rounded-lg p-4">
+            <div class="text-xs text-gray-500">Years</div>
+            <div class="text-2xl font-semibold mt-1">
+              <span x-text="panelData.year_min"></span>–<span x-text="panelData.year_max"></span>
+            </div>
+          </div>
+          <div class="border hairline rounded-lg p-4">
+            <div class="text-xs text-gray-500">Median yrs / firm</div>
+            <div class="text-2xl font-semibold mt-1" x-text="panelData.median_years_per_firm"></div>
+          </div>
+          <div class="border hairline rounded-lg p-4">
+            <div class="text-xs text-gray-500">Complete firms</div>
+            <div class="text-2xl font-semibold mt-1" x-text="panelData.complete_firms.toLocaleString()"></div>
+            <div class="text-[11px] text-gray-500 mt-1" x-text="((panelData.complete_firms/panelData.n_firms*100).toFixed(1)) + '% of all firms'"></div>
+          </div>
+          <div class="border hairline rounded-lg p-4">
+            <div class="text-xs text-gray-500">Status</div>
+            <div class="text-sm font-semibold mt-1" :class="panelData.balanced ? 'text-emerald-600' : 'text-amber-600'"
+                 x-text="panelData.balanced ? 'Balanced' : 'Unbalanced'"></div>
+            <div class="text-[11px] text-gray-500 mt-1" x-show="!panelData.balanced">Some firms missing years</div>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-2 gap-5">
+          <div class="border hairline rounded-lg p-5">
+            <div class="font-semibold">Years observed per firm</div>
+            <div class="text-xs text-gray-500 mb-3">How many firms appear in 1, 2, … N years of the panel.</div>
+            <div id="panel-yperf" style="height:280px"></div>
+          </div>
+          <div class="border hairline rounded-lg p-5">
+            <div class="font-semibold">Active firms per year</div>
+            <div class="text-xs text-gray-500 mb-3">Total number of firms reporting each year.</div>
+            <div id="panel-active" style="height:280px"></div>
+          </div>
+          <div class="border hairline rounded-lg p-5 col-span-2">
+            <div class="font-semibold">Entries vs Exits per year</div>
+            <div class="text-xs text-gray-500 mb-3">Entries = first year a firm appears. Exits = last year before panel end (potential survivorship bias if concentrated).</div>
+            <div id="panel-flow" style="height:300px"></div>
+          </div>
+        </div>
+
+        <!-- Within vs Between variance -->
+        <div class="border hairline rounded-lg p-5">
+          <div class="font-semibold">Within vs Between variance</div>
+          <div class="text-xs text-gray-500 mb-3">
+            For each variable, how much of the variance is across firms (between) vs within a firm over time?
+            High between-variance variables identify mostly via cross-section; firm FE wipes them out.
+            High within-variance variables are good candidates for FE estimation.
+          </div>
+          <div id="variance-bar" style="height:380px"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Explore (bivariate + tier 2 advanced) -->
+  <div x-show="!loading && tab === 'explore'" x-cloak class="space-y-5">
+    <!-- Bivariate scatter -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Scatter + linear fit</div>
+          <div class="text-xs text-gray-500 mt-0.5">Drag axes to explore any pair of numeric variables. Sample of up to 2,000 points.</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select x-model="scatterX" @change="loadScatter()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <option value="">X axis</option>
+            <template x-for="c in numericCols" :key="'sx'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-xs text-gray-500">vs</span>
+          <select x-model="scatterY" @change="loadScatter()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <option value="">Y axis</option>
+            <template x-for="c in numericCols" :key="'sy'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+      <div x-show="scatter?.fit" class="text-xs text-gray-700 mb-2 mono">
+        <span>corr =</span>
+        <span class="font-semibold" :class="Math.abs(scatter?.fit?.corr || 0) > 0.3 ? 'text-red-600' : 'text-gray-700'"
+              x-text="(scatter?.fit?.corr || 0).toFixed(3)"></span>
+        <span class="text-gray-500"> · slope =</span>
+        <span x-text="(scatter?.fit?.slope || 0).toFixed(4)"></span>
+        <span class="text-gray-500"> · n =</span>
+        <span x-text="scatter?.n_shown?.toLocaleString()"></span>
+        <span x-show="scatter?.n_total > scatter?.n_shown" class="text-gray-500" x-text="' / ' + scatter?.n_total?.toLocaleString()"></span>
+      </div>
+      <div id="scatter-chart" style="height:380px"></div>
+      <div x-show="!scatter && (!scatterX || !scatterY)" class="text-xs text-gray-500 py-10 text-center">Pick X and Y above.</div>
+    </div>
+
+    <!-- Group means -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Group means</div>
+          <div class="text-xs text-gray-500 mt-0.5">Mean ± std of a value column across categories. Top 30 groups by mean.</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select x-model="groupBy" @change="loadGroup()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <option value="">Group by</option>
+            <template x-for="c in cols" :key="'gb'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-xs text-gray-500">→</span>
+          <select x-model="groupValue" @change="loadGroup()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <option value="">Value</option>
+            <template x-for="c in numericCols" :key="'gv'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+      <div id="group-chart" style="height:420px"></div>
+      <div x-show="!groupData && (!groupBy || !groupValue)" class="text-xs text-gray-500 py-10 text-center">Pick group + value above.</div>
+    </div>
+
+    <!-- Quintile portfolio -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Quintile portfolio</div>
+          <div class="text-xs text-gray-500 mt-0.5">Bin firms by quintile of <span class="mono">X</span> (cross-sectionally), then plot mean of <span class="mono">Y</span> over time per quintile. Reveals non-linear effects.</div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <select x-model="quintileX" @change="loadQuintile()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <option value="">Bin by X</option>
+            <template x-for="c in numericCols" :key="'qx'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-xs text-gray-500">→ track Y =</span>
+          <select x-model="quintileY" @change="loadQuintile()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <option value="">Y</option>
+            <template x-for="c in numericCols" :key="'qy'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <select x-model.number="quintileN" @change="loadQuintile()" class="text-sm border hairline rounded-md px-2.5 py-1.5 focus-ring">
+            <template x-for="n in [3,4,5,10]" :key="'qn'+n"><option :value="n" x-text="n + ' bins'"></option></template>
+          </select>
+        </div>
+      </div>
+      <div id="quintile-chart" style="height:360px"></div>
+      <div x-show="!quintile && (!quintileX || !quintileY)" class="text-xs text-gray-500 py-10 text-center">Pick X (the bucket variable) and Y (what you're tracking).</div>
+      <div x-show="quintile?.error" class="text-xs text-red-600 py-3" x-text="quintile?.error"></div>
+    </div>
+
+    <!-- Treated vs Control trend -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Treated vs Control trend (DID-style)</div>
+          <div class="text-xs text-gray-500 mt-0.5">Split firms by cutoff on a treatment variable, plot mean of value over time. Vertical line marks the policy year — visualize parallel-trends assumption + treatment effect.</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-2 mb-3">
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Treatment col</label>
+          <select x-model="tcTreat" @change="loadTC()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in numericCols" :key="'tct'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Value col</label>
+          <select x-model="tcValue" @change="loadTC()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in numericCols" :key="'tcv'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Cutoff</label>
+          <select x-model="tcCutoffMethod" @change="loadTC()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="median_pre">Median pre-policy</option>
+            <option value="value">Custom value</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Post year (≥)</label>
+          <input type="number" min="1900" max="2100" step="1" x-model.number="tcPostYear" @blur="loadTC()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+        </div>
+        <div x-show="tcCutoffMethod === 'value'" x-cloak>
+          <label class="text-[11px] text-gray-600 mb-1 block">Cutoff value</label>
+          <input type="number" step="0.01" x-model.number="tcCutoffValue" @blur="loadTC()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+        </div>
+      </div>
+      <div x-show="tc?.cutoff !== undefined" class="text-xs text-gray-700 mono mb-2">cutoff = <span x-text="tc?.cutoff?.toFixed(4)"></span></div>
+      <div id="tc-chart" style="height:360px"></div>
+      <div x-show="!tc && (!tcTreat || !tcValue)" class="text-xs text-gray-500 py-10 text-center">Pick treatment + value to plot.</div>
+      <div x-show="tc?.error" class="text-xs text-red-600 py-3" x-text="tc?.error"></div>
+    </div>
+
+    <!-- Firm trajectories -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Firm trajectories</div>
+          <div class="text-xs text-gray-500 mt-0.5">Random sample of firm time-series + overall mean. Shows panel heterogeneity at a glance.</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select x-model="trajCol" @change="loadTraj()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">Variable</option>
+            <template x-for="c in numericCols" :key="'tj'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <select x-model.number="trajN" @change="loadTraj()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <template x-for="n in [5, 10, 15, 25, 50]" :key="'tjn'+n"><option :value="n" x-text="n + ' firms'"></option></template>
+          </select>
+          <button @click="trajSeed = Math.floor(Math.random()*1000); loadTraj()" class="text-xs px-2.5 py-1.5 border hairline rounded-md hover:bg-gray-50" x-show="trajCol">Re-sample</button>
+        </div>
+      </div>
+      <div id="traj-chart" style="height:380px"></div>
+      <div x-show="!traj && !trajCol" class="text-xs text-gray-500 py-10 text-center">Pick a variable.</div>
+      <div x-show="traj?.error" class="text-xs text-red-600 py-3" x-text="traj?.error"></div>
+    </div>
+
+    <!-- Lead-lag correlation -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Lead-lag correlation</div>
+          <div class="text-xs text-gray-500 mt-0.5">
+            Plot <span class="mono">corr(X(t-k), Y(t))</span> at different lags <span class="mono">k</span>.
+            Negative <span class="mono">k</span> = X leads Y. Helps justify which lag to use in regression.
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select x-model="llX" @change="loadLL()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">X</option>
+            <template x-for="c in numericCols" :key="'llx'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-xs text-gray-500">→</span>
+          <select x-model="llY" @change="loadLL()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">Y</option>
+            <template x-for="c in numericCols" :key="'lly'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <select x-model.number="llMaxLag" @change="loadLL()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <template x-for="n in [2,3,4,5]" :key="'llm'+n"><option :value="n" x-text="'± ' + n + ' lags'"></option></template>
+          </select>
+        </div>
+      </div>
+      <div id="ll-chart" style="height:340px"></div>
+      <div x-show="!ll && (!llX || !llY)" class="text-xs text-gray-500 py-10 text-center">Pick X and Y.</div>
+    </div>
+
+    <!-- Outlier detection -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Outlier scoring</div>
+          <div class="text-xs text-gray-500 mt-0.5">Flag firm-years where any selected variable has |z-score| above threshold. Helps spot data errors or extreme firms before regression.</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="number" step="0.5" min="1" max="10" x-model.number="outThresh" class="w-20 text-sm border hairline rounded-md px-2.5 py-1.5">
+          <span class="text-xs text-gray-500">σ threshold</span>
+          <button @click="loadOutliers()" class="text-xs px-3 py-1.5 bg-gray-900 text-white rounded-md hover:bg-black">Scan</button>
+        </div>
+      </div>
+      <div class="mb-3" x-show="numericCols.length">
+        <div class="flex items-center justify-between text-xs text-gray-600 mb-2">
+          <div>Variables to scan (<span x-text="outCols.length"></span> selected):</div>
+          <div class="flex gap-2">
+            <button @click="outCols = [...numericCols]" class="hover:text-gray-900">All</button>
+            <span class="text-gray-300">·</span>
+            <button @click="outCols = []" class="hover:text-gray-900">None</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <template x-for="c in numericCols" :key="'oc'+c">
+            <label class="inline-flex items-center gap-1.5 px-2 py-0.5 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
+              <input type="checkbox" :value="c" x-model="outCols" class="hidden">
+              <span x-text="c"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+      <template x-if="outliers && !outliers.error">
+        <div>
+          <div class="text-xs mb-3 px-3 py-2 rounded-md"
+               :class="outliers.pct_flagged > 5 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'">
+            Flagged <span class="font-semibold mono" x-text="outliers.n_flagged.toLocaleString()"></span>
+            of <span class="mono" x-text="outliers.n_total.toLocaleString()"></span>
+            (<span class="mono" x-text="outliers.pct_flagged + '%'"></span>) at |z| ><span class="mono" x-text="outliers.threshold"></span>.
+          </div>
+          <div class="border hairline rounded-md overflow-hidden">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-50 border-b hairline text-left text-gray-500">
+                <tr>
+                  <th class="px-3 py-2 font-medium">Entity</th>
+                  <th class="px-3 py-2 font-medium">Time</th>
+                  <th class="px-3 py-2 font-medium">Extreme column</th>
+                  <th class="px-3 py-2 font-medium text-right">Value</th>
+                  <th class="px-3 py-2 font-medium text-right">|z|</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(r, i) in outliers.rows" :key="i">
+                  <tr class="border-b hairline last:border-b-0">
+                    <td class="px-3 py-1.5 mono" x-text="r.entity || '—'"></td>
+                    <td class="px-3 py-1.5 mono" x-text="r.time ?? '—'"></td>
+                    <td class="px-3 py-1.5" x-text="r.extreme_col"></td>
+                    <td class="px-3 py-1.5 mono text-right" x-text="r.value?.toFixed(3)"></td>
+                    <td class="px-3 py-1.5 mono text-right font-semibold"
+                        :class="r.max_z > 5 ? 'text-red-600' : 'text-amber-600'"
+                        x-text="r.max_z.toFixed(2)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+      <div x-show="!outliers" class="text-xs text-gray-500 py-10 text-center">Click <span class="font-medium">Scan</span> to compute.</div>
+    </div>
+
+    <!-- Density ridgeplot -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Density ridgeplot</div>
+          <div class="text-xs text-gray-500 mt-0.5">Overlapped density curves of one variable across groups (e.g. distribution shift over years).</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select x-model="ridgeValue" @change="loadRidge()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">Variable</option>
+            <template x-for="c in numericCols" :key="'rv'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-xs text-gray-500">by</span>
+          <select x-model="ridgeGroup" @change="loadRidge()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">Group</option>
+            <template x-for="c in cols" :key="'rg'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+      <div id="ridge-chart" style="height:420px"></div>
+      <div x-show="!ridge && (!ridgeValue || !ridgeGroup)" class="text-xs text-gray-500 py-10 text-center">Pick variable + group.</div>
+      <div x-show="ridge?.error" class="text-xs text-red-600 py-3" x-text="ridge?.error"></div>
+    </div>
+
+    <!-- First differences (within-firm Δ scatter) -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Within-firm Δ scatter</div>
+          <div class="text-xs text-gray-500 mt-0.5">
+            For each firm, compute year-over-year change in <span class="mono">X</span> and <span class="mono">Y</span>, then scatter Δ X vs Δ Y.
+            Tests within-firm relationship without needing fixed effects — if Δ X correlates with Δ Y, the within-firm effect is real.
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <select x-model="fdX" @change="loadFD()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">X</option>
+            <template x-for="c in numericCols" :key="'fdx'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-xs text-gray-500">→</span>
+          <select x-model="fdY" @change="loadFD()" class="text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">Y</option>
+            <template x-for="c in numericCols" :key="'fdy'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+      <div x-show="fd?.fit" class="text-xs text-gray-700 mb-2 mono">
+        <span>corr(Δ) =</span>
+        <span class="font-semibold" :class="Math.abs(fd?.fit?.corr || 0) > 0.1 ? 'text-red-600' : 'text-gray-700'"
+              x-text="(fd?.fit?.corr || 0).toFixed(4)"></span>
+        <span class="text-gray-500"> · slope =</span>
+        <span x-text="(fd?.fit?.slope || 0).toFixed(4)"></span>
+        <span class="text-gray-500"> · n =</span>
+        <span x-text="fd?.n_shown?.toLocaleString()"></span>
+      </div>
+      <div id="fd-chart" style="height:380px"></div>
+      <div x-show="!fd && (!fdX || !fdY)" class="text-xs text-gray-500 py-10 text-center">Pick X and Y.</div>
+      <div x-show="fd?.error" class="text-xs text-red-600 py-3" x-text="fd?.error"></div>
+    </div>
+
+    <!-- Bubble chart -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Bubble chart (4 dimensions)</div>
+          <div class="text-xs text-gray-500 mt-0.5">X, Y, marker size, and color category. Spot clusters and how a third variable (e.g. firm size) modulates the X-Y relationship.</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-2 mb-3">
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">X axis</label>
+          <select x-model="bbX" @change="loadBubble()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in numericCols" :key="'bbx'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Y axis</label>
+          <select x-model="bbY" @change="loadBubble()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in numericCols" :key="'bby'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Bubble size</label>
+          <select x-model="bbSize" @change="loadBubble()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in numericCols" :key="'bbs'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Color (categorical)</label>
+          <select x-model="bbColor" @change="loadBubble()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">— None —</option>
+            <template x-for="c in cols" :key="'bbc'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+      </div>
+      <div id="bubble-chart" style="height:420px"></div>
+      <div x-show="!bubble && (!bbX || !bbY || !bbSize)" class="text-xs text-gray-500 py-10 text-center">Pick X, Y and bubble size.</div>
+      <div x-show="bubble?.error" class="text-xs text-red-600 py-3" x-text="bubble?.error"></div>
+    </div>
+
+    <!-- Pivot heatmap -->
+    <div class="border hairline rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div class="font-semibold">Pivot heatmap</div>
+          <div class="text-xs text-gray-500 mt-0.5">Aggregate a value across two categorical/time dimensions. Shows where ESG (or any metric) is concentrated.</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-2 mb-3">
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Rows</label>
+          <select x-model="pvRow" @change="loadPivot()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in cols" :key="'pvr'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Columns</label>
+          <select x-model="pvCol" @change="loadPivot()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in cols" :key="'pvc'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Value</label>
+          <select x-model="pvValue" @change="loadPivot()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <option value="">—</option>
+            <template x-for="c in numericCols" :key="'pvv'+c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-gray-600 mb-1 block">Aggregation</label>
+          <select x-model="pvAgg" @change="loadPivot()" class="w-full text-sm border hairline rounded-md px-2.5 py-1.5">
+            <template x-for="a in ['mean','median','sum','count','std','min','max']" :key="'pva'+a">
+              <option :value="a" x-text="a"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+      <div id="pivot-chart" style="height:520px"></div>
+      <div x-show="!pivot && (!pvRow || !pvCol || !pvValue)" class="text-xs text-gray-500 py-10 text-center">Pick rows, columns and a numeric value to aggregate.</div>
+      <div x-show="pivot?.error" class="text-xs text-red-600 py-3" x-text="pivot?.error"></div>
+    </div>
+  </div>
+
   <!-- Correlation -->
   <div x-show="!loading && tab === 'correlation'" x-cloak>
     <div class="border hairline rounded-lg p-5">
       <div class="font-semibold mb-1">Correlation matrix</div>
-      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Đỏ = dương cao, xanh = âm cao. Vùng đỏ đậm có thể gây multicollinearity.</div>
+      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Red = strong positive, blue = strong negative. Deep red blocks may indicate multicollinearity.</div>
       <div id="corr-chart" style="min-height:540px"></div>
     </div>
   </div>
@@ -177,7 +764,7 @@
         </tbody>
       </table>
     </div>
-    <div class="text-xs text-gray-500 mt-2">Hiển thị 50 dòng đầu trong tổng <span x-text="preview?.n_total?.toLocaleString()"></span> dòng.</div>
+    <div class="text-xs text-gray-500 mt-2">Showing first 50 rows out of <span x-text="preview?.n_total?.toLocaleString()"></span>.</div>
   </div>
 </div>
 
@@ -192,6 +779,9 @@ function datasetView(id) {
     tabs: [
       { key: 'overview', label: 'Overview' },
       { key: 'columns', label: 'Columns' },
+      { key: 'distributions', label: 'Distributions' },
+      { key: 'panel', label: 'Panel' },
+      { key: 'explore', label: 'Explore' },
       { key: 'correlation', label: 'Correlation' },
       { key: 'preview', label: 'Preview' }
     ],
@@ -200,13 +790,90 @@ function datasetView(id) {
     tsCols: [],
     corrLoaded: false,
 
+    // Aliases
+    aliases: {},
+    editing: null,
+
+    // Distributions
+    distCol: '',
+    dist: null,
+
+    // Panel
+    panelData: null,
+    panelLoaded: false,
+
+    // Relationships
+    scatterX: '',
+    scatterY: '',
+    scatter: null,
+    groupBy: '',
+    groupValue: '',
+    groupData: null,
+
+    // Tier 2: Quintile portfolio
+    quintileX: '',
+    quintileY: '',
+    quintileN: 5,
+    quintile: null,
+
+    // Tier 2: Treated vs Control
+    tcTreat: '',
+    tcValue: '',
+    tcCutoffMethod: 'median_pre',
+    tcCutoffValue: null,
+    tcPostYear: 2021,
+    tc: null,
+
+    // Tier 2: Trajectories
+    trajCol: '',
+    trajN: 15,
+    trajSeed: 42,
+    traj: null,
+
+    // Tier 2: Lead-lag
+    llX: '',
+    llY: '',
+    llMaxLag: 3,
+    ll: null,
+
+    // Tier 2: Outliers
+    outCols: [],
+    outThresh: 3,
+    outliers: null,
+
+    // Tier 3: Ridgeplot
+    ridgeValue: '',
+    ridgeGroup: '',
+    ridge: null,
+
+    // Tier 3: First-differences scatter
+    fdX: '',
+    fdY: '',
+    fd: null,
+
+    // Tier 3: Bubble chart
+    bbX: '',
+    bbY: '',
+    bbSize: '',
+    bbColor: '',
+    bubble: null,
+
+    // Tier 3: Pivot heatmap
+    pvRow: '',
+    pvCol: '',
+    pvValue: '',
+    pvAgg: 'mean',
+    pivot: null,
+
     async init() {
-      const [p, prev] = await Promise.all([
+      const [p, prev, aliasResp] = await Promise.all([
         fetch(`/api/datasets/${this.id}/profile`).then(r => r.json()),
         fetch(`/api/datasets/${this.id}/preview`).then(r => r.json()),
+        fetch(`/api/datasets/${this.id}/aliases`).then(r => r.json()),
       ]);
       this.profile = p;
       this.preview = prev;
+      this.aliases = aliasResp.aliases || {};
       this.tsCols = Object.keys(p.time_series?.series || {});
       // Prefer TESG/Score columns
       const preferred = this.tsCols.find(c => c.toLowerCase().includes('tesg')) ||
@@ -221,6 +888,569 @@ function datasetView(id) {
       this.tab = k;
       if (k === 'correlation' && !this.corrLoaded) this.loadCorr();
       if (k === 'overview') this.$nextTick(() => this.renderTs());
+      if (k === 'panel' && !this.panelLoaded) this.loadPanel();
+      if (k === 'distributions' && this.dist) this.$nextTick(() => this.renderDist());
+      if (k === 'explore') {
+        this.$nextTick(() => {
+          if (this.scatter) this.renderScatter();
+          if (this.groupData) this.renderGroup();
+          if (this.quintile) this.renderQuintile();
+          if (this.tc) this.renderTC();
+          if (this.traj) this.renderTraj();
+          if (this.ll) this.renderLL();
+          if (this.ridge) this.renderRidge();
+          if (this.fd) this.renderFD();
+          if (this.bubble) this.renderBubble();
+          if (this.pivot) this.renderPivot();
+        });
+      }
+    },
+
+    get numericCols() {
+      return (this.profile?.columns || []).filter(c => c.is_numeric).map(c => c.name);
+    },
+
+    get distHints() {
+      if (!this.dist || this.dist.type !== 'numeric') return [];
+      const h = [];
+      const s = this.dist.stats;
+      const pctZero = this.dist.n_zero / this.dist.n_total;
+      const pctMissing = this.dist.n_missing / this.dist.n_total;
+      if (pctZero > 0.3) h.push(`${(pctZero*100).toFixed(0)}% of values are exactly 0 — consider filtering "${this.dist.name} > 0" to isolate exposed firms.`);
+      if (pctMissing > 0.1) h.push(`${(pctMissing*100).toFixed(0)}% missing — verify why and whether dropna() will bias estimates.`);
+      if (Math.abs(s.skew) > 2) h.push(`Skewness = ${s.skew.toFixed(2)}. A log transform may stabilize the distribution.`);
+      if (s.kurt > 7) h.push(`Heavy tails (kurtosis = ${s.kurt.toFixed(1)}). Outliers will dominate OLS — winsorize or robust SE recommended.`);
+      if (s.min < 0 && this.dist.n_neg / this.dist.n_total < 0.01) h.push(`Only ${this.dist.n_neg} negative values; check whether these are data errors.`);
+      return h;
+    },
+
+    // ── Distributions ───────────────────────────────────────────────────────
+    async loadDist() {
+      if (!this.distCol) { this.dist = null; return; }
+      const r = await fetch(`/api/datasets/${this.id}/distribution?col=${encodeURIComponent(this.distCol)}`);
+      this.dist = await r.json();
+      this.$nextTick(() => this.renderDist());
+    },
+
+    renderDist() {
+      if (!this.dist || this.dist.type !== 'numeric') return;
+      const h = this.dist.histogram;
+      const centers = h.edges.slice(0, -1).map((e, i) => (e + h.edges[i+1]) / 2);
+      Plotly.newPlot('dist-hist', [{
+        x: centers, y: h.counts, type: 'bar',
+        marker: { color: '#111827' },
+        hovertemplate: 'bin: %{x:.3f}<br>count: %{y}<extra></extra>',
+      }], {
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        xaxis: { gridcolor: '#f3f4f6' },
+        yaxis: { gridcolor: '#f3f4f6' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+        bargap: 0.02,
+      }, { displayModeBar: false, responsive: true });
+
+      // Box (synthetic from quartiles)
+      const s = this.dist.stats;
+      Plotly.newPlot('dist-box', [{
+        type: 'box',
+        q1: [s.p25], median: [s.median], q3: [s.p75],
+        lowerfence: [s.p01], upperfence: [s.p99],
+        mean: [s.mean],
+        x: [this.dist.name],
+        boxpoints: false,
+        marker: { color: '#111827' },
+      }], {
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        yaxis: { gridcolor: '#f3f4f6' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Panel ───────────────────────────────────────────────────────────────
+    async loadPanel() {
+      this.panelLoaded = true;
+      const entity = this.profile?.panel?.entity_col || 'COID';
+      const time = this.profile?.panel?.time_col || 'Year';
+      const [pRes, vRes] = await Promise.all([
+        fetch(`/api/datasets/${this.id}/panel?entity=${encodeURIComponent(entity)}&time=${encodeURIComponent(time)}`).then(r => r.json()),
+        fetch(`/api/datasets/${this.id}/variance?entity=${encodeURIComponent(entity)}`).then(r => r.json()),
+      ]);
+      this.panelData = pRes;
+      this.panelVariance = vRes;
+      this.$nextTick(() => this.renderPanel());
+    },
+
+    renderPanel() {
+      if (!this.panelData || this.panelData.error) return;
+      const d = this.panelData;
+
+      Plotly.newPlot('panel-yperf', [{
+        x: d.years_per_firm.x, y: d.years_per_firm.y,
+        type: 'bar', marker: { color: '#111827' },
+      }], {
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        xaxis: { title: 'Years observed', gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { title: 'Number of firms', gridcolor: '#f3f4f6' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+
+      Plotly.newPlot('panel-active', [{
+        x: d.active_per_year.x, y: d.active_per_year.y,
+        type: 'scatter', mode: 'lines+markers',
+        line: { color: '#111827', width: 2 },
+        marker: { size: 7, color: '#111827' },
+      }], {
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        xaxis: { title: 'Year', gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { title: 'Active firms', gridcolor: '#f3f4f6' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+
+      Plotly.newPlot('panel-flow', [
+        { x: d.entries_per_year.x, y: d.entries_per_year.y,
+          name: 'Entries', type: 'bar', marker: { color: '#10b981' } },
+        { x: d.exits_per_year.x, y: d.exits_per_year.y.map(v => -v),
+          name: 'Exits', type: 'bar', marker: { color: '#ef4444' } },
+      ], {
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        barmode: 'relative',
+        xaxis: { title: 'Year', gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { title: 'Firms', gridcolor: '#f3f4f6', zeroline: true, zerolinecolor: '#000' },
+        legend: { orientation: 'h', y: -0.2 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+
+      // Variance decomposition
+      if (this.panelVariance && this.panelVariance.length) {
+        const sorted = [...this.panelVariance].sort((a, b) => a.within_pct - b.within_pct);
+        const labels = sorted.map(v => v.col);
+        Plotly.newPlot('variance-bar', [
+          { y: labels, x: sorted.map(v => v.within_pct), name: 'Within (over time)',
+            type: 'bar', orientation: 'h', marker: { color: '#2563eb' } },
+          { y: labels, x: sorted.map(v => v.between_pct), name: 'Between (across firms)',
+            type: 'bar', orientation: 'h', marker: { color: '#94a3b8' } },
+        ], {
+          margin: { l: 240, r: 20, t: 10, b: 40 },
+          barmode: 'stack',
+          xaxis: { title: '% of total variance', range: [0, 100], gridcolor: '#f3f4f6' },
+          yaxis: { tickfont: { size: 10 }, automargin: true },
+          legend: { orientation: 'h', y: -0.1 },
+          plot_bgcolor: 'white', paper_bgcolor: 'white',
+          font: { family: 'Inter', size: 11 },
+        }, { displayModeBar: false, responsive: true });
+      }
+    },
+
+    // ── Relationships ───────────────────────────────────────────────────────
+    async loadScatter() {
+      if (!this.scatterX || !this.scatterY) { this.scatter = null; return; }
+      const r = await fetch(`/api/datasets/${this.id}/scatter?x=${encodeURIComponent(this.scatterX)}&y=${encodeURIComponent(this.scatterY)}`);
+      this.scatter = await r.json();
+      this.$nextTick(() => this.renderScatter());
+    },
+
+    renderScatter() {
+      if (!this.scatter || this.scatter.error) return;
+      const traces = [{
+        x: this.scatter.x, y: this.scatter.y,
+        type: 'scattergl', mode: 'markers',
+        marker: { size: 5, color: '#111827', opacity: 0.4 },
+        name: 'Data',
+      }];
+      if (this.scatter.fit) {
+        const f = this.scatter.fit;
+        traces.push({
+          x: [f.x_min, f.x_max],
+          y: [f.intercept + f.slope * f.x_min, f.intercept + f.slope * f.x_max],
+          type: 'scatter', mode: 'lines',
+          line: { color: '#dc2626', width: 2 },
+          name: `fit (corr=${f.corr.toFixed(3)})`,
+        });
+      }
+      Plotly.newPlot('scatter-chart', traces, {
+        margin: { l: 60, r: 20, t: 10, b: 50 },
+        xaxis: { title: this.scatterX, gridcolor: '#f3f4f6' },
+        yaxis: { title: this.scatterY, gridcolor: '#f3f4f6' },
+        showlegend: true, legend: { orientation: 'h', y: -0.18 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    async loadGroup() {
+      if (!this.groupBy || !this.groupValue) { this.groupData = null; return; }
+      const r = await fetch(`/api/datasets/${this.id}/group?group=${encodeURIComponent(this.groupBy)}&value=${encodeURIComponent(this.groupValue)}`);
+      this.groupData = await r.json();
+      this.$nextTick(() => this.renderGroup());
+    },
+
+    renderGroup() {
+      if (!this.groupData || this.groupData.error) return;
+      const d = this.groupData;
+      Plotly.newPlot('group-chart', [{
+        type: 'bar',
+        y: d.groups, x: d.mean,
+        orientation: 'h',
+        error_x: { type: 'data', array: d.std, thickness: 1, color: '#9ca3af' },
+        marker: { color: '#111827' },
+        text: d.count.map(c => `n=${c}`),
+        textposition: 'outside',
+        hovertemplate: '%{y}<br>mean: %{x:.3f}<br>%{text}<extra></extra>',
+      }], {
+        margin: { l: 200, r: 60, t: 10, b: 40 },
+        xaxis: { title: `Mean of ${d.value_col}`, gridcolor: '#f3f4f6' },
+        yaxis: { tickfont: { size: 10 }, automargin: true, autorange: 'reversed' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Quintile portfolio ──────────────────────────────────────────────────
+    async loadQuintile() {
+      if (!this.quintileX || !this.quintileY) { this.quintile = null; return; }
+      const time = this.profile?.panel?.time_col || 'Year';
+      const r = await fetch(`/api/datasets/${this.id}/quintile?x=${encodeURIComponent(this.quintileX)}&y=${encodeURIComponent(this.quintileY)}&time=${encodeURIComponent(time)}&n_quintiles=${this.quintileN}`);
+      this.quintile = await r.json();
+      this.$nextTick(() => this.renderQuintile());
+    },
+    renderQuintile() {
+      if (!this.quintile || this.quintile.error) return;
+      const d = this.quintile;
+      const palette = ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a', '#0c1f5c'];
+      const traces = d.quintiles.map((q, i) => ({
+        x: d.time, y: q.values,
+        type: 'scatter', mode: 'lines+markers',
+        name: q.label,
+        line: { color: palette[Math.floor(i * (palette.length - 1) / (d.quintiles.length - 1)) || 0], width: 2 },
+        marker: { size: 6 },
+      }));
+      Plotly.newPlot('quintile-chart', traces, {
+        margin: { l: 60, r: 20, t: 10, b: 60 },
+        xaxis: { title: d.time_col, gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { title: `Mean of ${d.y_col}`, gridcolor: '#f3f4f6' },
+        legend: { orientation: 'h', y: -0.2 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Treated vs Control ──────────────────────────────────────────────────
+    async loadTC() {
+      if (!this.tcTreat || !this.tcValue) { this.tc = null; return; }
+      const time = this.profile?.panel?.time_col || 'Year';
+      let url = `/api/datasets/${this.id}/treated_control?treat=${encodeURIComponent(this.tcTreat)}&value=${encodeURIComponent(this.tcValue)}&time=${encodeURIComponent(time)}&cutoff_method=${this.tcCutoffMethod}&post_year=${this.tcPostYear}`;
+      if (this.tcCutoffMethod === 'value' && this.tcCutoffValue !== null) {
+        url += `&cutoff_value=${this.tcCutoffValue}`;
+      }
+      const r = await fetch(url);
+      this.tc = await r.json();
+      this.$nextTick(() => this.renderTC());
+    },
+    renderTC() {
+      if (!this.tc || this.tc.error) return;
+      const d = this.tc;
+      const traces = [
+        { x: d.time, y: d.high_mean, name: 'High exposure (treated)', type: 'scatter', mode: 'lines+markers',
+          line: { color: '#dc2626', width: 2.5 }, marker: { size: 7 } },
+        { x: d.time, y: d.low_mean, name: 'Low exposure (control)', type: 'scatter', mode: 'lines+markers',
+          line: { color: '#2563eb', width: 2.5 }, marker: { size: 7 } },
+      ];
+      const layout = {
+        margin: { l: 60, r: 20, t: 10, b: 60 },
+        xaxis: { title: d.time_col, gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { title: `Mean of ${d.value_col}`, gridcolor: '#f3f4f6' },
+        legend: { orientation: 'h', y: -0.2 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+        shapes: [],
+        annotations: [],
+      };
+      if (d.post_year) {
+        layout.shapes.push({
+          type: 'line', x0: d.post_year - 0.5, x1: d.post_year - 0.5,
+          y0: 0, y1: 1, yref: 'paper',
+          line: { color: '#6b7280', width: 1, dash: 'dash' },
+        });
+        layout.annotations.push({
+          x: d.post_year - 0.5, y: 1, yref: 'paper',
+          text: `Post: ≥${d.post_year}`, showarrow: false,
+          font: { size: 10, color: '#6b7280' },
+          bgcolor: 'white', borderpad: 2,
+        });
+      }
+      Plotly.newPlot('tc-chart', traces, layout, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Firm trajectories ───────────────────────────────────────────────────
+    async loadTraj() {
+      if (!this.trajCol) { this.traj = null; return; }
+      const entity = this.profile?.panel?.entity_col || 'COID';
+      const time = this.profile?.panel?.time_col || 'Year';
+      const r = await fetch(`/api/datasets/${this.id}/trajectories?value=${encodeURIComponent(this.trajCol)}&entity=${encodeURIComponent(entity)}&time=${encodeURIComponent(time)}&n=${this.trajN}`);
+      this.traj = await r.json();
+      this.$nextTick(() => this.renderTraj());
+    },
+    renderTraj() {
+      if (!this.traj || this.traj.error) return;
+      const d = this.traj;
+      const traces = d.trajectories.map(t => ({
+        x: t.x, y: t.y, type: 'scatter', mode: 'lines',
+        name: t.entity, line: { width: 1, color: 'rgba(17,24,39,0.25)' },
+        showlegend: false, hovertemplate: 'firm ' + t.entity + '<br>%{x}: %{y:.3f}<extra></extra>',
+      }));
+      traces.push({
+        x: d.mean.x, y: d.mean.y, type: 'scatter', mode: 'lines+markers',
+        name: 'Overall mean', line: { color: '#dc2626', width: 3 },
+        marker: { size: 8 }, hovertemplate: 'mean<br>%{x}: %{y:.3f}<extra></extra>',
+      });
+      Plotly.newPlot('traj-chart', traces, {
+        margin: { l: 60, r: 20, t: 20, b: 60 },
+        xaxis: { title: d.time_col, gridcolor: '#f3f4f6', tickmode: 'linear' },
+        yaxis: { title: d.value_col, gridcolor: '#f3f4f6' },
+        legend: { orientation: 'h', y: -0.2 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+        title: { text: `${d.n_sampled} sampled out of ${d.n_eligible} firms with ≥3 years`, font: { size: 11, color: '#6b7280' } },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Lead-lag correlation ────────────────────────────────────────────────
+    async loadLL() {
+      if (!this.llX || !this.llY) { this.ll = null; return; }
+      const entity = this.profile?.panel?.entity_col || 'COID';
+      const time = this.profile?.panel?.time_col || 'Year';
+      const r = await fetch(`/api/datasets/${this.id}/leadlag?x=${encodeURIComponent(this.llX)}&y=${encodeURIComponent(this.llY)}&entity=${encodeURIComponent(entity)}&time=${encodeURIComponent(time)}&max_lag=${this.llMaxLag}`);
+      this.ll = await r.json();
+      this.$nextTick(() => this.renderLL());
+    },
+    renderLL() {
+      if (!this.ll || this.ll.error) return;
+      const d = this.ll;
+      const colors = d.correlations.map(c => {
+        if (c === null) return '#e5e7eb';
+        const a = Math.min(1, Math.abs(c) / 0.5);
+        return c >= 0 ? `rgba(220,38,38,${a})` : `rgba(37,99,235,${a})`;
+      });
+      Plotly.newPlot('ll-chart', [{
+        x: d.lags.map(l => `${l > 0 ? 'X(t-' + l + ')' : (l < 0 ? 'X(t+' + (-l) + ')' : 'X(t)')}`),
+        y: d.correlations,
+        type: 'bar',
+        marker: { color: colors },
+        text: d.correlations.map((c, i) => c === null ? '—' : `${c.toFixed(3)}\nn=${d.n[i]}`),
+        textposition: 'outside',
+        hovertemplate: '%{x}<br>corr = %{y:.4f}<extra></extra>',
+      }], {
+        margin: { l: 60, r: 20, t: 20, b: 60 },
+        xaxis: { title: 'Lag (negative = X leads Y)' },
+        yaxis: { title: `corr with ${d.y_col}(t)`, gridcolor: '#f3f4f6', zeroline: true, zerolinecolor: '#000' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Column rename / aliases ─────────────────────────────────────────────
+    startEdit(col) {
+      this.editing = col;
+    },
+    async saveAlias(realName, newAlias) {
+      const trimmed = (newAlias || '').trim();
+      if (!trimmed || trimmed === realName) {
+        // Empty or same as real name → remove alias
+        delete this.aliases[realName];
+      } else {
+        this.aliases[realName] = trimmed;
+      }
+      await fetch(`/api/datasets/${this.id}/aliases`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aliases: this.aliases }),
+      });
+      window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Saved', kind: 'success' } }));
+    },
+    async resetAliases() {
+      if (!confirm('Remove all column renames for this dataset?')) return;
+      this.aliases = {};
+      await fetch(`/api/datasets/${this.id}/aliases`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aliases: {} }),
+      });
+      window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Renames reset', kind: 'success' } }));
+    },
+
+    // ── Ridgeplot ───────────────────────────────────────────────────────────
+    async loadRidge() {
+      if (!this.ridgeValue || !this.ridgeGroup) { this.ridge = null; return; }
+      const r = await fetch(`/api/datasets/${this.id}/ridgeplot?value=${encodeURIComponent(this.ridgeValue)}&group=${encodeURIComponent(this.ridgeGroup)}`);
+      this.ridge = await r.json();
+      this.$nextTick(() => this.renderRidge());
+    },
+    renderRidge() {
+      if (!this.ridge || this.ridge.error) return;
+      const d = this.ridge;
+      // Stack densities vertically with offset; each ridge is a filled area
+      const groups = d.densities.slice().reverse();
+      const maxDens = Math.max(...groups.flatMap(g => g.density));
+      const offset = maxDens * 1.2;
+      const traces = [];
+      groups.forEach((g, i) => {
+        const y = g.density.map(v => v + i * offset);
+        const baseY = i * offset;
+        traces.push({
+          x: d.centers, y, type: 'scatter', mode: 'lines',
+          fill: 'tonexty',
+          line: { color: '#111827', width: 1 },
+          fillcolor: `rgba(37,99,235,${0.15 + 0.5 * (i / groups.length)})`,
+          name: g.group,
+          hovertemplate: `${g.group} · n=${g.n} · mean=${g.mean}<extra></extra>`,
+          showlegend: false,
+        });
+        // Baseline trace (invisible) for fill anchoring
+        traces.push({
+          x: d.centers, y: d.centers.map(() => baseY),
+          type: 'scatter', mode: 'lines',
+          line: { width: 0 }, showlegend: false, hoverinfo: 'skip',
+        });
+      });
+      Plotly.newPlot('ridge-chart', traces, {
+        margin: { l: 80, r: 20, t: 10, b: 50 },
+        xaxis: { title: d.value_col, gridcolor: '#f3f4f6' },
+        yaxis: {
+          tickmode: 'array',
+          tickvals: groups.map((_, i) => i * offset + maxDens / 3),
+          ticktext: groups.map(g => `${g.group} (n=${g.n})`),
+          showgrid: false,
+        },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── First differences ───────────────────────────────────────────────────
+    async loadFD() {
+      if (!this.fdX || !this.fdY) { this.fd = null; return; }
+      const entity = this.profile?.panel?.entity_col || 'COID';
+      const time = this.profile?.panel?.time_col || 'Year';
+      const r = await fetch(`/api/datasets/${this.id}/first_diff?x=${encodeURIComponent(this.fdX)}&y=${encodeURIComponent(this.fdY)}&entity=${encodeURIComponent(entity)}&time=${encodeURIComponent(time)}`);
+      this.fd = await r.json();
+      this.$nextTick(() => this.renderFD());
+    },
+    renderFD() {
+      if (!this.fd || this.fd.error) return;
+      const d = this.fd;
+      const traces = [{
+        x: d.x, y: d.y, type: 'scattergl', mode: 'markers',
+        marker: { size: 4, color: '#111827', opacity: 0.4 },
+        name: 'Δ',
+      }];
+      if (d.fit) {
+        const f = d.fit;
+        traces.push({
+          x: [f.x_min, f.x_max],
+          y: [f.intercept + f.slope * f.x_min, f.intercept + f.slope * f.x_max],
+          type: 'scatter', mode: 'lines',
+          line: { color: '#dc2626', width: 2 },
+          name: `fit (corr=${f.corr.toFixed(4)})`,
+        });
+      }
+      Plotly.newPlot('fd-chart', traces, {
+        margin: { l: 60, r: 20, t: 10, b: 60 },
+        xaxis: { title: d.x_col, gridcolor: '#f3f4f6', zeroline: true, zerolinecolor: '#000' },
+        yaxis: { title: d.y_col, gridcolor: '#f3f4f6', zeroline: true, zerolinecolor: '#000' },
+        showlegend: true, legend: { orientation: 'h', y: -0.2 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Bubble chart ────────────────────────────────────────────────────────
+    async loadBubble() {
+      if (!this.bbX || !this.bbY || !this.bbSize) { this.bubble = null; return; }
+      let url = `/api/datasets/${this.id}/bubble?x=${encodeURIComponent(this.bbX)}&y=${encodeURIComponent(this.bbY)}&size=${encodeURIComponent(this.bbSize)}`;
+      if (this.bbColor) url += `&color=${encodeURIComponent(this.bbColor)}`;
+      const r = await fetch(url);
+      this.bubble = await r.json();
+      this.$nextTick(() => this.renderBubble());
+    },
+    renderBubble() {
+      if (!this.bubble || this.bubble.error) return;
+      const d = this.bubble;
+      const sizes = d.size;
+      const sMin = Math.min(...sizes), sMax = Math.max(...sizes);
+      const range = sMax - sMin || 1;
+      const scaled = sizes.map(s => 5 + 35 * (s - sMin) / range);
+      const traces = [];
+      const palette = ['#111827','#2563eb','#16a34a','#dc2626','#9333ea','#ea580c','#0891b2','#65a30d','#db2777','#facc15'];
+      if (d.color && d.color.length) {
+        const groups = {};
+        d.color.forEach((c, i) => { (groups[c] = groups[c] || []).push(i); });
+        Object.entries(groups).slice(0, 12).forEach(([g, idxs], gi) => {
+          traces.push({
+            x: idxs.map(i => d.x[i]), y: idxs.map(i => d.y[i]),
+            mode: 'markers', type: 'scatter',
+            marker: { size: idxs.map(i => scaled[i]), color: palette[gi % palette.length], opacity: 0.6, line: { width: 0.5, color: 'white' } },
+            name: String(g),
+            hovertemplate: `${d.color_col}: ${g}<br>${d.x_col}: %{x:.3f}<br>${d.y_col}: %{y:.3f}<extra></extra>`,
+          });
+        });
+      } else {
+        traces.push({
+          x: d.x, y: d.y, mode: 'markers', type: 'scatter',
+          marker: { size: scaled, color: '#111827', opacity: 0.5 },
+          name: 'all',
+        });
+      }
+      Plotly.newPlot('bubble-chart', traces, {
+        margin: { l: 60, r: 20, t: 10, b: 60 },
+        xaxis: { title: d.x_col, gridcolor: '#f3f4f6' },
+        yaxis: { title: d.y_col, gridcolor: '#f3f4f6' },
+        showlegend: true, legend: { orientation: 'h', y: -0.2 },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Pivot heatmap ───────────────────────────────────────────────────────
+    async loadPivot() {
+      if (!this.pvRow || !this.pvCol || !this.pvValue) { this.pivot = null; return; }
+      const r = await fetch(`/api/datasets/${this.id}/pivot?row=${encodeURIComponent(this.pvRow)}&col=${encodeURIComponent(this.pvCol)}&value=${encodeURIComponent(this.pvValue)}&agg=${this.pvAgg}`);
+      this.pivot = await r.json();
+      this.$nextTick(() => this.renderPivot());
+    },
+    renderPivot() {
+      if (!this.pivot || this.pivot.error) return;
+      const d = this.pivot;
+      Plotly.newPlot('pivot-chart', [{
+        z: d.values, x: d.cols, y: d.rows,
+        type: 'heatmap',
+        colorscale: 'Viridis',
+        text: d.values.map(row => row.map(v => v === null ? '' : v.toFixed(2))),
+        texttemplate: '%{text}',
+        textfont: { size: 9 },
+        hoverongaps: false,
+        hovertemplate: `${d.row_col}: %{y}<br>${d.col_col}: %{x}<br>${d.agg}(${d.value_col}): %{z}<extra></extra>`,
+      }], {
+        margin: { l: 160, r: 20, t: 10, b: 60 },
+        xaxis: { title: d.col_col, side: 'top' },
+        yaxis: { tickfont: { size: 10 }, automargin: true, autorange: 'reversed' },
+        plot_bgcolor: 'white', paper_bgcolor: 'white',
+        font: { family: 'Inter', size: 11 },
+      }, { displayModeBar: false, responsive: true });
+    },
+
+    // ── Outliers ────────────────────────────────────────────────────────────
+    async loadOutliers() {
+      if (!this.outCols.length) {
+        this.outCols = this.numericCols.slice(0, 10);
+      }
+      const entity = this.profile?.panel?.entity_col || 'COID';
+      const time = this.profile?.panel?.time_col || 'Year';
+      const r = await fetch(`/api/datasets/${this.id}/outliers?cols=${encodeURIComponent(this.outCols.join(','))}&entity=${encodeURIComponent(entity)}&time=${encodeURIComponent(time)}&threshold=${this.outThresh}`);
+      this.outliers = await r.json();
     },
 
     get filteredCols() {

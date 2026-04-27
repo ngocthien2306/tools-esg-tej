@@ -94,12 +94,24 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
     # Auto-generate models if user didn't specify
     if not cfg.models:
         cfg.models = [ModelSpec(name="Model 1", extra_vars=[], label="Base controls")]
+        mode = cfg.sample_filter_mode
         for rv in cfg.revenue_vars:
-            if rv in rev_lag_cols:
+            if rv not in rev_lag_cols:
+                continue
+            if mode in ("none", "compare_both"):
                 cfg.models.append(ModelSpec(
-                    name=f"Model + {rv}",
+                    name=f"+ {rv}",
                     extra_vars=[rv],
-                    label=f"+ {rv}",
+                    label="full sample",
+                ))
+            if mode in ("positive", "compare_both"):
+                cfg.models.append(ModelSpec(
+                    name=f"+ {rv} (>0)",
+                    extra_vars=[rv],
+                    filter_col=rv,
+                    filter_op=">",
+                    filter_value=0.0,
+                    label=f"{rv} > 0",
                 ))
         if did_info:
             cfg.models.append(ModelSpec(

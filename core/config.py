@@ -43,5 +43,11 @@ class AnalysisConfig(BaseModel):
     did_cutoff_value: Optional[float] = None
     did_post_year: int = 2021
 
+    # Sample filtering for revenue models
+    # "none"          : full sample for every model
+    # "positive"      : revenue models filter to rows where rev > 0
+    # "compare_both"  : generate paired models (full + filtered) for comparison
+    sample_filter_mode: Literal["none", "positive", "compare_both"] = "none"
+
     models: List[ModelSpec] = Field(default_factory=list)
     note: str = ""

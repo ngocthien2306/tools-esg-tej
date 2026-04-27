@@ -1,29 +1,74 @@
+import base64
 import json
+import os
 import shutil
 import uuid
 from pathlib import Path
 
+import pandas as pd
+
 from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Body
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from paths import RUNS as DATA_RUNS
+
 from core.config import AnalysisConfig
 from core.loader import save_upload, load_dataset, dataset_path
-from core.profiler import profile_dataset, correlation_matrix
-from core.merger import merge_datasets as merge_fn
+from core.profiler import (
+    profile_dataset, correlation_matrix,
+    column_distribution, panel_balance, within_between_variance,
+    bivariate, group_stats,
+    quintile_portfolio, treated_control_trend, firm_trajectories,
+    lead_lag_correlation, outlier_scores,
+    density_ridgeplot, first_differences, bubble_chart, pivot_heatmap,
+)
+from core.merger import merge_datasets as merge_fn, merge_two as merge_two_fn
 from core.pipeline import run_analysis
 from core.reporter import export_excel
 from db import db
 
 BASE = Path(__file__).parent
-RUNS = BASE / "runs"
-RUNS.mkdir(exist_ok=True)
+RUNS = DATA_RUNS
 (BASE / "static").mkdir(exist_ok=True)
 
 app = FastAPI(title="ESG Analysis Tool")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
+
+
+# ── Auth (HTTP Basic, env-gated) ─────────────────────────────────────────────
+APP_USER = os.environ.get("APP_USER", "admin")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+
+@app.middleware("http")
+async def basic_auth(request: Request, call_next):
+    # No password set → run open (local dev mode)
+    if not APP_PASSWORD:
+        return await call_next(request)
+    # Allow health checks and static assets without auth
+    if request.url.path in ("/healthz",) or request.url.path.startswith("/static"):
+        return await call_next(request)
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth[6:]).decode()
+            user, _, pwd = decoded.partition(":")
+            if user == APP_USER and pwd == APP_PASSWORD:
+                return await call_next(request)
+        except Exception:
+            pass
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="ESG Lab"'},
+    )
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 
 # ── Pages ────────────────────────────────────────────────────────────────────
@@ -129,6 +174,135 @@ async def api_preview(dataset_id: str, n: int = 50):
     }
 
 
+@app.get("/api/datasets/{dataset_id}/distribution")
+async def api_distribution(dataset_id: str, col: str, bins: int = 30):
+    df = load_dataset(dataset_id)
+    return column_distribution(df, col, bins)
+
+
+@app.get("/api/datasets/{dataset_id}/panel")
+async def api_panel(dataset_id: str, entity: str = "COID", time: str = "Year"):
+    df = load_dataset(dataset_id)
+    return panel_balance(df, entity, time)
+
+
+@app.get("/api/datasets/{dataset_id}/variance")
+async def api_variance(dataset_id: str, entity: str = "COID", cols: str = ""):
+    df = load_dataset(dataset_id)
+    col_list = [c for c in cols.split(",") if c] if cols else None
+    if col_list is None:
+        col_list = [c for c in df.columns
+                    if c != entity and pd.api.types.is_numeric_dtype(df[c])]
+    return within_between_variance(df, entity, col_list)
+
+
+@app.get("/api/datasets/{dataset_id}/scatter")
+async def api_scatter(dataset_id: str, x: str, y: str, sample: int = 2000):
+    df = load_dataset(dataset_id)
+    return bivariate(df, x, y, sample)
+
+
+@app.get("/api/datasets/{dataset_id}/group")
+async def api_group(dataset_id: str, group: str, value: str, top_n: int = 30):
+    df = load_dataset(dataset_id)
+    return group_stats(df, group, value, top_n)
+
+
+# ── Tier 2 analyses ──────────────────────────────────────────────────────────
+
+@app.get("/api/datasets/{dataset_id}/quintile")
+async def api_quintile(dataset_id: str, x: str, y: str,
+                       time: str = "Year", n_quintiles: int = 5):
+    df = load_dataset(dataset_id)
+    return quintile_portfolio(df, x, y, time, n_quintiles)
+
+
+@app.get("/api/datasets/{dataset_id}/treated_control")
+async def api_treated_control(dataset_id: str, treat: str, value: str,
+                              time: str = "Year",
+                              cutoff_method: str = "median_pre",
+                              cutoff_value: float = None,
+                              post_year: int = 2021):
+    df = load_dataset(dataset_id)
+    return treated_control_trend(df, treat, value, time,
+                                 cutoff_method, cutoff_value, post_year)
+
+
+@app.get("/api/datasets/{dataset_id}/trajectories")
+async def api_trajectories(dataset_id: str, value: str,
+                           entity: str = "COID", time: str = "Year",
+                           n: int = 15):
+    df = load_dataset(dataset_id)
+    return firm_trajectories(df, entity, time, value, n_sample=n)
+
+
+@app.get("/api/datasets/{dataset_id}/leadlag")
+async def api_leadlag(dataset_id: str, x: str, y: str,
+                      entity: str = "COID", time: str = "Year",
+                      max_lag: int = 3):
+    df = load_dataset(dataset_id)
+    return lead_lag_correlation(df, x, y, entity, time, max_lag)
+
+
+@app.get("/api/datasets/{dataset_id}/outliers")
+async def api_outliers(dataset_id: str, cols: str = "",
+                       entity: str = "COID", time: str = "Year",
+                       threshold: float = 3.0, top_n: int = 50):
+    df = load_dataset(dataset_id)
+    col_list = [c for c in cols.split(",") if c] if cols else None
+    if col_list is None:
+        col_list = [c for c in df.columns
+                    if c not in (entity, time)
+                    and pd.api.types.is_numeric_dtype(df[c])]
+    return outlier_scores(df, col_list, entity, time, threshold, top_n)
+
+
+# ── Tier 3 ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/datasets/{dataset_id}/ridgeplot")
+async def api_ridgeplot(dataset_id: str, value: str, group: str, n_bins: int = 50):
+    df = load_dataset(dataset_id)
+    return density_ridgeplot(df, value, group, n_bins)
+
+
+@app.get("/api/datasets/{dataset_id}/first_diff")
+async def api_first_diff(dataset_id: str, x: str, y: str,
+                         entity: str = "COID", time: str = "Year",
+                         sample: int = 2000):
+    df = load_dataset(dataset_id)
+    return first_differences(df, x, y, entity, time, sample)
+
+
+@app.get("/api/datasets/{dataset_id}/bubble")
+async def api_bubble(dataset_id: str, x: str, y: str, size: str,
+                     color: str = "", sample: int = 500):
+    df = load_dataset(dataset_id)
+    return bubble_chart(df, x, y, size, color or None, sample)
+
+
+@app.get("/api/datasets/{dataset_id}/pivot")
+async def api_pivot(dataset_id: str, row: str, col: str, value: str,
+                    agg: str = "mean"):
+    df = load_dataset(dataset_id)
+    return pivot_heatmap(df, row, col, value, agg)
+
+
+# ── Aliases (column renames) ─────────────────────────────────────────────────
+
+@app.get("/api/datasets/{dataset_id}/aliases")
+async def api_get_aliases(dataset_id: str):
+    return {"aliases": db.get_dataset(dataset_id)["aliases"] if db.get_dataset(dataset_id) else {}}
+
+
+@app.patch("/api/datasets/{dataset_id}/aliases")
+async def api_set_aliases(dataset_id: str, payload: dict = Body(...)):
+    aliases = payload.get("aliases", {})
+    if not isinstance(aliases, dict):
+        raise HTTPException(400, "aliases must be a dict")
+    db.update_aliases(dataset_id, aliases)
+    return {"ok": True}
+
+
 @app.delete("/api/datasets/{dataset_id}")
 async def api_delete_dataset(dataset_id: str):
     try:
@@ -142,13 +316,19 @@ async def api_delete_dataset(dataset_id: str):
 
 @app.post("/api/datasets/merge")
 async def api_merge(payload: dict = Body(...)):
-    dataset_ids = payload.get("dataset_ids", [])
-    on = payload.get("on", [])
+    """Two-dataset merge with per-side keys + keep-columns + strategy."""
+    left_id = payload.get("left_id")
+    right_id = payload.get("right_id")
+    left_keys = payload.get("left_keys", [])
+    right_keys = payload.get("right_keys", [])
+    left_keep = payload.get("left_keep")  # null/None means keep all
+    right_keep = payload.get("right_keep")
     how = payload.get("how", "inner")
-    if not dataset_ids or not on:
-        raise HTTPException(400, "Missing dataset_ids or on")
+    if not left_id or not right_id or not left_keys or not right_keys:
+        raise HTTPException(400, "Missing left_id/right_id/left_keys/right_keys")
     try:
-        info = merge_fn(dataset_ids, on, how)
+        info = merge_two_fn(left_id, right_id, left_keys, right_keys,
+                            left_keep=left_keep, right_keep=right_keep, how=how)
     except Exception as e:
         raise HTTPException(400, str(e))
     db.add_dataset(info, source="merge")

@@ -3,110 +3,229 @@
 {% block content %}
 <script id="merge-init" type="application/json">{{ datasets | tojson }}</script>
 
-<div x-data="mergePage()" class="max-w-5xl mx-auto px-8 py-10">
+<div x-data="mergePage()" x-init="init()" class="max-w-6xl mx-auto px-8 py-10">
   <h1 class="text-2xl font-semibold tracking-tight">Merge datasets</h1>
-  <p class="text-sm text-gray-600 mt-1 mb-8">Chọn 2+ dataset, set key columns, và tool sẽ join thành dataset mới.</p>
+  <p class="text-sm text-gray-600 mt-1 mb-8">
+    Pick two datasets, map their keys (different names OK — e.g. <span class="mono">COID</span> ↔ <span class="mono">firm_id</span>),
+    choose which columns to keep from each side, and select a join strategy.
+  </p>
 
-  <div class="space-y-5">
+  <!-- Step 1: pick left & right -->
+  <div class="grid grid-cols-2 gap-5 mb-5">
     <section class="border hairline rounded-lg p-5">
-      <div class="flex items-center justify-between mb-3">
-        <div class="font-semibold">1. Chọn datasets</div>
-        <div class="text-xs text-gray-500"><span x-text="selected.length"></span> selected</div>
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        {% for d in datasets %}
-        <label class="flex items-start gap-3 p-3 border hairline rounded-md hover:bg-gray-50 cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900 transition-colors">
-          <input type="checkbox" value="{{ d.id }}" @change="toggle('{{ d.id }}', $event.target.checked)" class="mt-1">
-          <div class="min-w-0 flex-1">
-            <div class="font-medium text-sm truncate">{{ d.filename }}</div>
-            <div class="text-xs opacity-70 mt-0.5">{{ "{:,}".format(d.n_rows) }} rows × {{ d.n_cols }} cols</div>
-          </div>
-        </label>
-        {% endfor %}
-        {% if not datasets %}
-        <div class="col-span-2 text-center text-sm text-gray-500 py-8">Chưa có dataset. <a href="/" class="underline">Upload</a> trước đã.</div>
-        {% endif %}
-      </div>
-    </section>
-
-    <section class="border hairline rounded-lg p-5" x-show="selected.length >= 2" x-cloak>
-      <div class="font-semibold mb-2">2. Key columns</div>
-      <div class="text-xs text-gray-500 mb-3">Cột chung xuất hiện ở tất cả dataset đã chọn. Click để chọn key.</div>
-      <div class="flex flex-wrap gap-1.5">
-        <template x-for="c in commonCols" :key="c">
-          <label class="inline-flex items-center gap-2 px-3 py-1.5 border hairline rounded-md text-sm cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
-            <input type="checkbox" :value="c" x-model="keys" class="hidden">
-            <span x-text="c"></span>
-          </label>
+      <div class="font-semibold mb-3">Left dataset</div>
+      <select x-model="leftId" @change="onLeftChange()" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        <option value="">— Select —</option>
+        <template x-for="d in datasets" :key="'l'+d.id">
+          <option :value="d.id" x-text="d.filename + ' (' + d.n_rows.toLocaleString() + ' rows × ' + d.n_cols + ' cols)'"></option>
         </template>
-      </div>
-      <div x-show="commonCols.length === 0" class="text-sm text-amber-700">Không có cột chung. Datasets không thể merge với cấu trúc hiện tại.</div>
+      </select>
+      <div x-show="leftId" x-cloak class="text-[11px] text-gray-500 mono mt-2" x-text="leftId"></div>
     </section>
+    <section class="border hairline rounded-lg p-5">
+      <div class="font-semibold mb-3">Right dataset</div>
+      <select x-model="rightId" @change="onRightChange()" class="w-full border hairline rounded-md px-3 py-2 text-sm focus-ring">
+        <option value="">— Select —</option>
+        <template x-for="d in datasets" :key="'r'+d.id">
+          <option :value="d.id" :disabled="d.id === leftId" x-text="d.filename + ' (' + d.n_rows.toLocaleString() + ' rows × ' + d.n_cols + ' cols)'"></option>
+        </template>
+      </select>
+      <div x-show="rightId" x-cloak class="text-[11px] text-gray-500 mono mt-2" x-text="rightId"></div>
+    </section>
+  </div>
 
-    <section class="border hairline rounded-lg p-5" x-show="keys.length > 0" x-cloak>
-      <div class="font-semibold mb-3">3. Strategy</div>
+  <!-- Step 2: key mapping -->
+  <section class="border hairline rounded-lg p-5 mb-5" x-show="leftId && rightId" x-cloak>
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <div class="font-semibold">Key mapping</div>
+        <div class="text-xs text-gray-500 mt-0.5">Pair columns from left → right. Add a row for each composite-key part (e.g. firm + year).</div>
+      </div>
       <div class="flex gap-2">
-        <template x-for="h in ['inner', 'left', 'outer']" :key="h">
-          <label class="px-4 py-2 border hairline rounded-md text-sm cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900 capitalize">
-            <input type="radio" name="how" :value="h" x-model="how" class="hidden">
-            <span x-text="h"></span>
-          </label>
-        </template>
+        <button @click="autoPairKeys()" class="text-xs px-2.5 py-1.5 border hairline rounded-md hover:bg-gray-50">Auto-pair common</button>
+        <button @click="addKeyPair()" class="text-xs px-2.5 py-1.5 bg-gray-900 text-white rounded-md hover:bg-black">+ Add pair</button>
       </div>
-      <div class="text-xs text-gray-500 mt-3" x-show="how === 'inner'">Inner: chỉ giữ rows có đủ key ở mọi dataset.</div>
-      <div class="text-xs text-gray-500 mt-3" x-show="how === 'left'">Left: giữ tất cả rows của dataset đầu tiên.</div>
-      <div class="text-xs text-gray-500 mt-3" x-show="how === 'outer'">Outer: union — giữ tất cả rows; chỗ thiếu thành NaN.</div>
-    </section>
+    </div>
 
-    <div x-show="keys.length > 0" x-cloak class="flex justify-end">
-      <button @click="run()" :disabled="running"
-              class="bg-gray-900 text-white text-sm font-medium px-5 py-2 rounded-md hover:bg-black disabled:opacity-50">
+    <div class="space-y-2">
+      <template x-for="(pair, i) in keyPairs" :key="i">
+        <div class="grid grid-cols-[1fr_auto_1fr_auto] gap-2 items-center">
+          <select x-model="pair.left" class="border hairline rounded-md px-2.5 py-1.5 text-sm focus-ring">
+            <option value="">left key…</option>
+            <template x-for="c in leftCols" :key="'lk'+i+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <span class="text-gray-400 text-sm px-1">↔</span>
+          <select x-model="pair.right" class="border hairline rounded-md px-2.5 py-1.5 text-sm focus-ring">
+            <option value="">right key…</option>
+            <template x-for="c in rightCols" :key="'rk'+i+c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <button @click="keyPairs.splice(i, 1)" class="text-gray-400 hover:text-red-600 text-sm px-2">×</button>
+        </div>
+      </template>
+      <div x-show="keyPairs.length === 0" class="text-xs text-gray-500 py-3">No key pairs yet. Click <span class="font-medium">+ Add pair</span>.</div>
+    </div>
+  </section>
+
+  <!-- Step 3: keep columns -->
+  <section class="border hairline rounded-lg p-5 mb-5" x-show="leftId && rightId" x-cloak>
+    <div class="font-semibold mb-3">Keep columns</div>
+    <div class="grid grid-cols-2 gap-5">
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-xs font-medium text-gray-700">From left dataset</div>
+          <div class="flex gap-2 text-xs">
+            <button @click="leftKeep = [...leftCols]" class="text-gray-600 hover:text-gray-900">All</button>
+            <span class="text-gray-300">·</span>
+            <button @click="leftKeep = []" class="text-gray-600 hover:text-gray-900">None</button>
+            <span class="text-gray-300">·</span>
+            <span class="text-gray-500" x-text="leftKeep.length + ' / ' + leftCols.length"></span>
+          </div>
+        </div>
+        <div class="border hairline rounded-md max-h-72 overflow-y-auto p-2 space-y-1">
+          <template x-for="c in leftCols" :key="'lk'+c">
+            <label class="flex items-center gap-2 px-2 py-1 text-xs hover:bg-gray-50 rounded cursor-pointer">
+              <input type="checkbox" :value="c" x-model="leftKeep" class="rounded">
+              <span x-text="c" :class="keyPairs.some(p => p.left === c) ? 'font-semibold' : ''"></span>
+              <span x-show="keyPairs.some(p => p.left === c)" class="text-[10px] text-blue-600">key</span>
+            </label>
+          </template>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-xs font-medium text-gray-700">From right dataset</div>
+          <div class="flex gap-2 text-xs">
+            <button @click="rightKeep = [...rightCols]" class="text-gray-600 hover:text-gray-900">All</button>
+            <span class="text-gray-300">·</span>
+            <button @click="rightKeep = []" class="text-gray-600 hover:text-gray-900">None</button>
+            <span class="text-gray-300">·</span>
+            <span class="text-gray-500" x-text="rightKeep.length + ' / ' + rightCols.length"></span>
+          </div>
+        </div>
+        <div class="border hairline rounded-md max-h-72 overflow-y-auto p-2 space-y-1">
+          <template x-for="c in rightCols" :key="'rk'+c">
+            <label class="flex items-center gap-2 px-2 py-1 text-xs hover:bg-gray-50 rounded cursor-pointer">
+              <input type="checkbox" :value="c" x-model="rightKeep" class="rounded">
+              <span x-text="c" :class="keyPairs.some(p => p.right === c) ? 'font-semibold' : ''"></span>
+              <span x-show="keyPairs.some(p => p.right === c)" class="text-[10px] text-blue-600">key</span>
+            </label>
+          </template>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 4: strategy -->
+  <section class="border hairline rounded-lg p-5 mb-5" x-show="leftId && rightId" x-cloak>
+    <div class="font-semibold mb-3">Strategy</div>
+    <div class="grid grid-cols-4 gap-2">
+      <template x-for="opt in strategies" :key="opt.value">
+        <label class="cursor-pointer p-3 border hairline rounded-md transition-colors"
+               :class="how === opt.value ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'">
+          <input type="radio" :value="opt.value" x-model="how" class="hidden">
+          <div class="text-sm font-medium capitalize" x-text="opt.value"></div>
+          <div class="text-[11px] mt-1" :class="how === opt.value ? 'opacity-80' : 'text-gray-600'" x-text="opt.desc"></div>
+        </label>
+      </template>
+    </div>
+  </section>
+
+  <!-- Validation + Run -->
+  <div x-show="leftId && rightId" x-cloak>
+    <div x-show="errors.length > 0" class="border border-red-200 bg-red-50 rounded-lg px-4 py-3 mb-4">
+      <div class="text-xs font-semibold text-red-800 mb-1.5">Cannot merge:</div>
+      <ul class="text-xs text-red-700 list-disc list-inside space-y-0.5">
+        <template x-for="e in errors" :key="e"><li x-text="e"></li></template>
+      </ul>
+    </div>
+
+    <div class="flex justify-end gap-2">
+      <button @click="run()" :disabled="running || errors.length > 0"
+              class="bg-gray-900 text-white text-sm font-medium px-5 py-2 rounded-md hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed">
         <span x-show="!running">Run merge</span>
         <span x-show="running">Merging…</span>
       </button>
     </div>
+  </div>
 
-    <div x-show="result" x-cloak class="border border-emerald-200 bg-emerald-50 rounded-lg p-5">
-      <div class="font-semibold text-emerald-800">Merge thành công</div>
-      <div class="text-sm text-emerald-700 mt-1">
-        <span x-text="result?.n_rows?.toLocaleString()"></span> rows ·
-        <span x-text="result?.n_cols"></span> cols
-      </div>
-      <div class="mt-3 flex gap-2">
-        <a :href="'/datasets/' + result?.id" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700">View dataset</a>
-        <a :href="'/train?dataset_id=' + result?.id" class="text-sm border border-emerald-600 text-emerald-700 px-3 py-1.5 rounded-md hover:bg-emerald-100">Train</a>
-      </div>
+  <div x-show="result" x-cloak class="border border-emerald-200 bg-emerald-50 rounded-lg p-5 mt-5">
+    <div class="font-semibold text-emerald-800">Merge successful</div>
+    <div class="text-sm text-emerald-700 mt-1">
+      <span x-text="result?.n_rows?.toLocaleString()"></span> rows ·
+      <span x-text="result?.n_cols"></span> cols ·
+      saved as <span class="mono" x-text="result?.filename"></span>
+    </div>
+    <div class="mt-3 flex gap-2">
+      <a :href="'/datasets/' + result?.id" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700">View dataset</a>
+      <a :href="'/train?dataset_id=' + result?.id" class="text-sm border border-emerald-600 text-emerald-700 px-3 py-1.5 rounded-md hover:bg-emerald-100">Train on it</a>
     </div>
   </div>
 </div>
 
 <script>
 function mergePage() {
-  const _meta = JSON.parse(document.getElementById('merge-init').textContent);
-  const _colsById = Object.fromEntries(_meta.map(d => [d.id, d.columns || []]));
+  const META = JSON.parse(document.getElementById('merge-init').textContent);
+  const colsById = Object.fromEntries(META.map(d => [d.id, d.columns || []]));
   return {
-    selected: [],
-    cols: {},
-    keys: [],
+    datasets: META,
+    leftId: '',
+    rightId: '',
+    leftCols: [],
+    rightCols: [],
+    leftKeep: [],
+    rightKeep: [],
+    keyPairs: [],
     how: 'inner',
+    strategies: [
+      { value: 'inner', desc: 'Only matching keys' },
+      { value: 'left',  desc: 'All left rows' },
+      { value: 'right', desc: 'All right rows' },
+      { value: 'outer', desc: 'Union, fill NaN' },
+    ],
     running: false,
     result: null,
 
-    toggle(id, on) {
-      if (on) {
-        this.selected.push(id);
-        this.cols[id] = _colsById[id] || [];
-      } else {
-        this.selected = this.selected.filter(s => s !== id);
-        delete this.cols[id];
-        this.keys = this.keys.filter(k => this.commonCols.includes(k));
-      }
+    init() {},
+
+    onLeftChange() {
+      this.leftCols = colsById[this.leftId] || [];
+      this.leftKeep = [...this.leftCols];
+      this.keyPairs = [];
+      if (this.rightId) this.autoPairKeys();
+    },
+    onRightChange() {
+      this.rightCols = colsById[this.rightId] || [];
+      this.rightKeep = [...this.rightCols];
+      if (this.leftId) this.autoPairKeys();
     },
 
-    get commonCols() {
-      if (this.selected.length < 2) return [];
-      const arrays = this.selected.map(s => this.cols[s] || []);
-      return arrays[0].filter(c => arrays.every(a => a.includes(c)));
+    autoPairKeys() {
+      const common = this.leftCols.filter(c => this.rightCols.includes(c));
+      this.keyPairs = common.map(c => ({ left: c, right: c }));
+      if (this.keyPairs.length === 0) this.addKeyPair();
+    },
+    addKeyPair() {
+      this.keyPairs.push({ left: '', right: '' });
+    },
+
+    get errors() {
+      const e = [];
+      if (this.leftId && this.rightId && this.leftId === this.rightId) e.push('Left and right datasets must differ.');
+      if (this.keyPairs.length === 0) e.push('Add at least one key pair.');
+      this.keyPairs.forEach((p, i) => {
+        if (!p.left || !p.right) e.push(`Key pair #${i+1}: pick both left and right columns.`);
+      });
+      // Duplicates
+      const lks = this.keyPairs.map(p => p.left).filter(Boolean);
+      const rks = this.keyPairs.map(p => p.right).filter(Boolean);
+      if (new Set(lks).size !== lks.length) e.push('Duplicate left keys.');
+      if (new Set(rks).size !== rks.length) e.push('Duplicate right keys.');
+      // Keys must be in keep
+      this.keyPairs.forEach(p => {
+        if (p.left && !this.leftKeep.includes(p.left)) e.push(`Left key "${p.left}" must be in keep columns.`);
+        if (p.right && !this.rightKeep.includes(p.right)) e.push(`Right key "${p.right}" must be in keep columns.`);
+      });
+      return e;
     },
 
     async run() {
@@ -115,7 +234,15 @@ function mergePage() {
       const r = await fetch('/api/datasets/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataset_ids: this.selected, on: this.keys, how: this.how })
+        body: JSON.stringify({
+          left_id: this.leftId,
+          right_id: this.rightId,
+          left_keys: this.keyPairs.map(p => p.left),
+          right_keys: this.keyPairs.map(p => p.right),
+          left_keep: this.leftKeep,
+          right_keep: this.rightKeep,
+          how: this.how,
+        }),
       });
       this.running = false;
       if (r.ok) {
@@ -125,7 +252,7 @@ function mergePage() {
         const err = await r.text();
         window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Failed: ' + err.slice(0, 200), kind: 'error' } }));
       }
-    }
+    },
   }
 }
 </script>
