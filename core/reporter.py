@@ -77,7 +77,38 @@ def _write_summary(ws, run_data):
         ws.cell(i, 1, k).font = Font(bold=True)
         ws.cell(i, 2, v)
 
-    start = 3 + len(rows) + 2
+    next_row = 3 + len(rows) + 1
+
+    # DID setup block
+    did = run_data.get("did")
+    did_warning = run_data.get("did_warning")
+    if did:
+        ws.cell(next_row, 1, "DID setup").font = Font(bold=True, color="FFFFFF")
+        ws.cell(next_row, 1).fill = PatternFill("solid", fgColor=TEAL)
+        ws.merge_cells(start_row=next_row, start_column=1,
+                       end_row=next_row, end_column=4)
+        next_row += 1
+        did_rows = [
+            ("Treatment column", did.get("treat_col")),
+            ("Cutoff", round(did.get("cutoff", 0), 4)),
+            ("Post year (≥)", did.get("post_year")),
+            ("Assignment", did.get("assignment", "")),
+            ("Firms High", did.get("n_firms_high")),
+            ("Firms Low", did.get("n_firms_low")),
+            ("Firms dropped (no pre-data)", did.get("n_firms_dropped")),
+            ("Treated × Post obs", did.get("n_did")),
+        ]
+        for k, v in did_rows:
+            ws.cell(next_row, 1, k).font = Font(bold=True)
+            ws.cell(next_row, 2, v)
+            next_row += 1
+        next_row += 1
+    elif did_warning:
+        ws.cell(next_row, 1, "DID skipped").font = Font(bold=True, color="C00000")
+        ws.cell(next_row, 2, did_warning)
+        next_row += 2
+
+    start = next_row + 1
     _header(ws, start, ["Model", "Label", "Key Var", "p-value", "Sig",
                         "N obs", "R² Within", "R² Overall"])
     for i, row in enumerate(run_data["summary"], start + 1):
@@ -93,6 +124,15 @@ def _write_summary(ws, run_data):
             ws.cell(i, 5).font = Font(bold=True, color="C00000")
         elif row["key_sig"] == "*":
             ws.cell(i, 5).font = Font(bold=True, color="E26B0A")
+
+    # Append errored models so they aren't silently missing
+    errored = [(m, d) for m, d in run_data["results"].items() if "error" in d]
+    if errored:
+        err_start = start + 1 + len(run_data["summary"])
+        for i, (m, d) in enumerate(errored, err_start):
+            ws.cell(i, 1, m)
+            ws.cell(i, 2, f"ERROR: {d['error']}").font = Font(color="C00000", italic=True)
+            ws.merge_cells(start_row=i, start_column=2, end_row=i, end_column=8)
 
     for letter, w in zip("ABCDEFGH", [22, 28, 32, 12, 8, 10, 12, 12]):
         ws.column_dimensions[letter].width = w

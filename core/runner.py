@@ -7,6 +7,7 @@ def fit_panel(y, X, entity_effects: bool = False, time_effects: bool = True,
         y, X,
         entity_effects=entity_effects,
         time_effects=time_effects,
+        drop_absorbed=True,
     ).fit(
         cov_type="clustered" if cluster_entity else "robust",
         cluster_entity=cluster_entity,

@@ -41,27 +41,48 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
             if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
                 df[col] = winsorize(df[col].astype(float), limits=[lo, hi])
 
-    # DID variables
+    # DID variables — firm-level treatment fixed by pre-period average
     did_info = None
+    did_warning = None
     if (cfg.did_enabled and cfg.did_treat_col
             and cfg.did_treat_col in df.columns
             and cfg.time_col in df.columns):
-        if cfg.did_cutoff_method == "median_pre":
-            pre = df[df[cfg.time_col] < cfg.did_post_year]
-            cutoff = float(pre[cfg.did_treat_col].median())
+        pre = df[df[cfg.time_col] < cfg.did_post_year]
+        if pre.empty:
+            did_warning = (
+                "DID skipped: no pre-period rows "
+                f"(time_col < {cfg.did_post_year}). Lower the Post year."
+            )
         else:
-            cutoff = float(cfg.did_cutoff_value or 0)
-        df["High_Treat"] = (df[cfg.did_treat_col].fillna(0) > cutoff).astype(int)
-        df["Post"] = (df[cfg.time_col] >= cfg.did_post_year).astype(int)
-        df["DID"] = df["High_Treat"] * df["Post"]
-        did_info = {
-            "treat_col": cfg.did_treat_col,
-            "cutoff": cutoff,
-            "post_year": cfg.did_post_year,
-            "n_high": int(df["High_Treat"].sum()),
-            "n_post": int(df["Post"].sum()),
-            "n_did": int(df["DID"].sum()),
-        }
+            firm_pre = pre.groupby(cfg.entity_col)[cfg.did_treat_col].mean()
+            firm_pre = firm_pre.dropna()
+            if cfg.did_cutoff_method == "median_pre":
+                cutoff = float(firm_pre.median()) if not firm_pre.empty else float("nan")
+            else:
+                cutoff = float(cfg.did_cutoff_value or 0)
+
+            if pd.isna(cutoff) or firm_pre.empty:
+                did_warning = "DID skipped: insufficient pre-period data to compute cutoff."
+            else:
+                n_firms_total = int(df[cfg.entity_col].nunique())
+                high_map = (firm_pre > cutoff).astype(int)
+                df["High_Treat"] = df[cfg.entity_col].map(high_map)
+                df = df.dropna(subset=["High_Treat"]).copy()
+                df["High_Treat"] = df["High_Treat"].astype(int)
+                df["Post"] = (df[cfg.time_col] >= cfg.did_post_year).astype(int)
+                df["DID"] = df["High_Treat"] * df["Post"]
+                did_info = {
+                    "treat_col": cfg.did_treat_col,
+                    "cutoff": cutoff,
+                    "post_year": cfg.did_post_year,
+                    "assignment": "firm-level pre-period mean",
+                    "n_firms_high": int(high_map.sum()),
+                    "n_firms_low": int((1 - high_map).sum()),
+                    "n_firms_dropped": n_firms_total - int(len(firm_pre)),
+                    "n_high": int(df["High_Treat"].sum()),
+                    "n_post": int(df["Post"].sum()),
+                    "n_did": int(df["DID"].sum()),
+                }
 
     # Sort & lag
     df = df.sort_values([cfg.entity_col, cfg.time_col])
@@ -116,7 +137,7 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
         if did_info:
             cfg.models.append(ModelSpec(
                 name="Model DID",
-                extra_vars=["High_Treat", "DID"],
+                extra_vars=["High_Treat", "Post", "DID"],
                 label="DID",
             ))
 
@@ -233,6 +254,7 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
             "n_dropped": int(n_full - n_lag),
         },
         "did": did_info,
+        "did_warning": did_warning,
         "summary": summary_rows,
         "results": results,
     }

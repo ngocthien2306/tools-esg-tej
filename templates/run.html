@@ -48,6 +48,17 @@
       <div><div class="text-xs text-gray-500">Post year</div><div class="font-medium mt-0.5">≥ {{ result.did.post_year }}</div></div>
       <div><div class="text-xs text-gray-500">Treated × Post</div><div class="font-medium mt-0.5">{{ result.did.n_did }} obs</div></div>
     </div>
+    <div class="grid grid-cols-4 gap-4 text-sm mt-3 pt-3 border-t hairline">
+      <div><div class="text-xs text-gray-500">Firms High</div><div class="font-medium mt-0.5">{{ result.did.n_firms_high }}</div></div>
+      <div><div class="text-xs text-gray-500">Firms Low</div><div class="font-medium mt-0.5">{{ result.did.n_firms_low }}</div></div>
+      <div><div class="text-xs text-gray-500">Firms dropped (no pre-data)</div><div class="font-medium mt-0.5">{{ result.did.n_firms_dropped }}</div></div>
+      <div><div class="text-xs text-gray-500">Assignment</div><div class="font-medium mt-0.5">{{ result.did.assignment }}</div></div>
+    </div>
+  </div>
+  {% endif %}
+  {% if result.did_warning %}
+  <div class="border border-amber-200 bg-amber-50 rounded-lg px-4 py-3 mb-8 text-xs text-amber-800">
+    {{ result.did_warning }}
   </div>
   {% endif %}
 
@@ -88,6 +99,12 @@
             <td class="px-4 py-3 text-right">{{ "{:,}".format(s.n_obs) }}</td>
             <td class="px-4 py-3 mono text-xs text-right">{{ s.rsq_within }}</td>
             <td class="px-4 py-3 mono text-xs text-right">{{ s.rsq_overall }}</td>
+          </tr>
+          {% endfor %}
+          {% for m, d in result.results.items() if 'error' in d %}
+          <tr class="border-b hairline last:border-b-0 bg-red-50/50">
+            <td class="px-4 py-3 font-medium">{{ m }}</td>
+            <td colspan="6" class="px-4 py-3 text-xs text-red-700 italic">ERROR: {{ d.error }}</td>
           </tr>
           {% endfor %}
         </tbody>
