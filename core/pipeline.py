@@ -22,6 +22,11 @@ def _make_lag(df: pd.DataFrame, col: str, lag: int, entity_col: str) -> str:
 def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
     df = load_dataset(cfg.dataset_id)
 
+    # Drop duplicate column labels (keep first). A duplicated label makes df[col]
+    # return a DataFrame instead of a Series, which breaks lag/winsorize/fit.
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()].copy()
+
     # Year filter
     if cfg.year_min is not None and cfg.time_col in df.columns:
         df = df[df[cfg.time_col] >= cfg.year_min].copy()
@@ -87,8 +92,13 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
     # Sort & lag
     df = df.sort_values([cfg.entity_col, cfg.time_col])
 
+    # A revenue (key) variable must not double as a base control, otherwise it
+    # enters every model as a regressor and shows up in all columns instead of
+    # only in its own model.
+    rev_set = set(cfg.revenue_vars)
     base_lag_cols = [_make_lag(df, c, cfg.base_lag, cfg.entity_col)
-                     for c in cfg.base_features if c in df.columns]
+                     for c in cfg.base_features
+                     if c in df.columns and c not in rev_set]
     rev_lag_cols = {c: _make_lag(df, c, cfg.rev_lag, cfg.entity_col)
                     for c in cfg.revenue_vars if c in df.columns}
 
@@ -175,7 +185,12 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
             continue
 
         valid_ind = [c for c in ind_cols if c in sub.columns and sub[c].nunique() > 1]
-        xcols = base_lag_cols + extra + valid_ind
+        # De-duplicate while preserving order: a key variable that is also a base
+        # feature would otherwise appear twice and make sub[xcols] a 2-D selection,
+        # which PanelOLS rejects with "'DataFrame' object has no attribute 'dtype'".
+        seen = set()
+        xcols = [c for c in (base_lag_cols + extra + valid_ind)
+                 if c != cfg.target and not (c in seen or seen.add(c))]
 
         if not xcols:
             results[model.name] = {"error": "No regressors"}

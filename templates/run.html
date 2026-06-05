@@ -13,8 +13,57 @@
         {% if meta.note %}<span>·</span><span>{{ meta.note }}</span>{% endif %}
       </div>
     </div>
-    <div class="flex gap-2">
-      <a href="/api/runs/{{ meta.id }}/export" class="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black">Export Excel</a>
+    <div class="flex gap-2 relative" @keydown.escape="showExport = false">
+      <button @click="showExport = !showExport"
+              class="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black">
+        Export ▾
+      </button>
+      <div x-show="showExport" x-cloak @click.outside="showExport = false"
+           class="absolute right-0 top-11 w-80 bg-white border hairline rounded-lg shadow-lg p-4 z-30 text-sm">
+        <div class="font-semibold text-xs text-gray-500 uppercase tracking-wide mb-1.5">Layout</div>
+        <div class="space-y-1.5 mb-4">
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" value="publication" x-model="exp.layout" class="mt-0.5">
+            <span><span class="font-medium">Publication table</span>
+              <span class="block text-[11px] text-gray-500">Academic format — models in columns, coef over (t-stat), auto Panel A/B.</span></span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" value="comparison" x-model="exp.layout" class="mt-0.5">
+            <span><span class="font-medium">Comparison matrix</span>
+              <span class="block text-[11px] text-gray-500">All models as columns in one flat table.</span></span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" value="raw" x-model="exp.layout" class="mt-0.5">
+            <span><span class="font-medium">Raw data workbook</span>
+              <span class="block text-[11px] text-gray-500">Full coef/SE/t/p/CI per model (Excel only).</span></span>
+          </label>
+        </div>
+
+        <div class="font-semibold text-xs text-gray-500 uppercase tracking-wide mb-1.5">Format</div>
+        <div class="flex gap-1.5 mb-4" x-show="exp.layout !== 'raw'">
+          <template x-for="f in [{k:'xlsx',l:'Excel'},{k:'docx',l:'Word'},{k:'html',l:'HTML'}]" :key="f.k">
+            <button @click="exp.format = f.k"
+                    :class="exp.format === f.k ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'"
+                    class="text-xs px-3 py-1.5 border hairline rounded-md flex-1" x-text="f.l"></button>
+          </template>
+        </div>
+        <div class="text-[11px] text-gray-500 mb-4" x-show="exp.layout === 'raw'">Exports as Excel (.xlsx).</div>
+
+        <div x-show="exp.layout !== 'raw'">
+          <div class="font-semibold text-xs text-gray-500 uppercase tracking-wide mb-1.5">In parentheses</div>
+          <div class="flex gap-1.5 mb-4">
+            <template x-for="s in [{k:'tstat',l:'t-stat'},{k:'se',l:'Std. error'},{k:'pvalue',l:'p-value'}]" :key="s.k">
+              <button @click="exp.stat = s.k"
+                      :class="exp.stat === s.k ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'"
+                      class="text-xs px-3 py-1.5 border hairline rounded-md flex-1" x-text="s.l"></button>
+            </template>
+          </div>
+        </div>
+
+        <button @click="doExport()"
+                class="w-full bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-black"
+                x-text="exp.format === 'html' && exp.layout !== 'raw' ? 'Open HTML' : 'Download'"></button>
+      </div>
     </div>
   </div>
 
@@ -193,11 +242,28 @@ function runView() {
   const firstModel = Object.keys(RESULT.results)[0] || '';
   return {
     activeModel: firstModel,
+    showExport: false,
+    exp: { format: 'xlsx', layout: 'publication', stat: 'tstat' },
     init() {
       this.$nextTick(() => {
         renderForest();
         renderHeatmap();
       });
+    },
+    exportUrl() {
+      const p = this.exp.layout === 'raw'
+        ? { format: 'xlsx', layout: 'raw' }
+        : this.exp;
+      return `/api/runs/{{ meta.id }}/export?` + new URLSearchParams(p).toString();
+    },
+    doExport() {
+      const url = this.exportUrl();
+      if (this.exp.format === 'html' && this.exp.layout !== 'raw') {
+        window.open(url, '_blank');
+      } else {
+        window.location.href = url;
+      }
+      this.showExport = false;
     }
   }
 }

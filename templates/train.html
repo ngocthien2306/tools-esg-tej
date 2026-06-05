@@ -457,8 +457,43 @@ function trainPage() {
       this.cfg.entity_col = entity;
       this.cfg.time_col = time;
       this.cfg.industry_col = industry;
-      // Auto-apply ESG defaults
-      this.loadDefaults({ silent: true });
+      // Restore the selection from the last run on this dataset, else ESG defaults.
+      if (this.restoreCfg()) {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Restored your last selection', kind: 'success' } }));
+      } else {
+        this.loadDefaults({ silent: true });
+      }
+    },
+
+    // ── Persist selection per dataset ─────────────────────────────────────────
+    cfgKey() { return 'esg.trainCfg.' + this.datasetId; },
+
+    saveCfg() {
+      try { localStorage.setItem(this.cfgKey(), JSON.stringify(this.cfg)); } catch (e) {}
+    },
+
+    restoreCfg() {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem(this.cfgKey()) || 'null'); } catch (e) { return false; }
+      if (!saved || typeof saved !== 'object') return false;
+      const colSet = new Set(this.cols);
+      // Merge saved over current cfg, then re-validate against this dataset's columns.
+      const m = Object.assign({}, this.cfg, saved);
+      m.dataset_id = this.datasetId;
+      // Panel/treatment columns: keep auto-detected if the saved one no longer exists.
+      if (!colSet.has(m.entity_col)) m.entity_col = this.cfg.entity_col;
+      if (!colSet.has(m.time_col)) m.time_col = this.cfg.time_col;
+      if (m.industry_col && !colSet.has(m.industry_col)) m.industry_col = this.cfg.industry_col;
+      if (m.did_treat_col && !colSet.has(m.did_treat_col)) m.did_treat_col = '';
+      // Log-transform columns must be real; build the set of available names (incl. ln_*).
+      m.log_transform_cols = (m.log_transform_cols || []).filter(c => colSet.has(c));
+      const avail = new Set([...this.cols, ...m.log_transform_cols.map(c => 'ln_' + c)]);
+      m.base_features = (m.base_features || []).filter(c => avail.has(c));
+      m.revenue_vars = (m.revenue_vars || []).filter(c => colSet.has(c));
+      m.winsorize_cols = (m.winsorize_cols || []).filter(c => colSet.has(c));
+      if (!this.TARGETS.includes(m.target) && !colSet.has(m.target)) m.target = this.cfg.target;
+      this.cfg = m;
+      return true;
     },
 
     get availableCols() {
@@ -558,12 +593,14 @@ function trainPage() {
       this.cfg.revenue_vars = DEFAULT_REVENUE.filter(has);
       this.cfg.winsorize_cols = DEFAULT_WINSORIZE.filter(has);
       if (!opts.silent) {
-        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Defaults applied', kind: 'success' } }));
+        try { localStorage.removeItem(this.cfgKey()); } catch (e) {}
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Defaults applied — saved selection cleared', kind: 'success' } }));
       }
     },
 
     async run() {
       this.running = true;
+      this.saveCfg();   // remember this selection for next time
       const payload = JSON.parse(JSON.stringify(this.cfg));
       if (payload.industry_col === '') payload.industry_col = null;
       if (payload.did_treat_col === '') payload.did_treat_col = null;

@@ -27,6 +27,8 @@ from core.profiler import (
 from core.merger import merge_datasets as merge_fn, merge_two as merge_two_fn
 from core.pipeline import run_analysis
 from core.reporter import export_excel
+from core.tables import build_spec
+from core.exporters import render_html, render_docx, render_xlsx
 from db import db
 
 BASE = Path(__file__).parent
@@ -355,16 +357,63 @@ async def api_create_run(cfg: AnalysisConfig):
     return {"run_id": run_id, "summary": result["summary"]}
 
 
+_EXPORT_MEDIA = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "html": "text/html; charset=utf-8",
+}
+
+
 @app.get("/api/runs/{run_id}/export")
-async def api_export(run_id: str):
+async def api_export(run_id: str, format: str = "xlsx",
+                     layout: str = "publication", stat: str = "tstat"):
+    """Export a run's tables.
+
+    format: xlsx | docx | html
+    layout: publication | comparison | raw   (raw = full data workbook, xlsx only)
+    stat:   tstat | se | pvalue              (value shown in parentheses)
+    """
     result_path = RUNS / run_id / "result.json"
     if not result_path.exists():
         raise HTTPException(404)
     with open(result_path) as f:
         result = json.load(f)
-    out = RUNS / run_id / f"report_{run_id}.xlsx"
-    export_excel(result, out)
-    return FileResponse(out, filename=out.name)
+
+    fmt = format.lower()
+    if fmt not in _EXPORT_MEDIA:
+        raise HTTPException(400, f"Unsupported format '{format}'")
+
+    # Raw multi-sheet workbook keeps the legacy detailed exporter (xlsx only).
+    if layout == "raw":
+        out = RUNS / run_id / f"report_{run_id}.xlsx"
+        export_excel(result, out)
+        return FileResponse(out, filename=f"{result['config']['target']}_raw.xlsx",
+                            media_type=_EXPORT_MEDIA["xlsx"])
+
+    # Pretty variable labels from the dataset's saved aliases, if any.
+    aliases = {}
+    try:
+        ds = db.get_dataset(result["config"]["dataset_id"])
+        if ds:
+            aliases = ds.get("aliases") or {}
+    except Exception:
+        aliases = {}
+
+    spec = build_spec(result, layout=layout, stat=stat, aliases=aliases)
+    target = result["config"]["target"]
+    safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in target).strip() or "table"
+    fname = f"{safe}_{layout}.{fmt}"
+
+    if fmt == "html":
+        return Response(content=render_html(spec), media_type=_EXPORT_MEDIA["html"],
+                        headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+    out = RUNS / run_id / fname
+    if fmt == "xlsx":
+        render_xlsx(spec, out)
+    else:
+        render_docx(spec, out)
+    return FileResponse(out, filename=fname, media_type=_EXPORT_MEDIA[fmt])
 
 
 @app.delete("/api/runs/{run_id}")
