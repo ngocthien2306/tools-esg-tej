@@ -20,13 +20,57 @@
   </div>
 
   <div class="border-b hairline mb-6">
-    <div class="flex gap-6 text-sm">
-      <template x-for="t in tabs" :key="t.key">
-        <button @click="setTab(t.key)"
-                :class="tab === t.key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'"
-                class="border-b-2 pb-3 -mb-px transition-colors font-medium"
-                x-text="t.label"></button>
-      </template>
+    <div class="flex items-end justify-between">
+      <div class="flex gap-6 text-sm">
+        <template x-for="t in tabs" :key="t.key">
+          <button @click="setTab(t.key)"
+                  :class="tab === t.key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                  class="border-b-2 pb-3 -mb-px transition-colors font-medium"
+                  x-text="t.label"></button>
+        </template>
+      </div>
+
+      <!-- Chart colors config -->
+      <div class="relative pb-2" @keydown.escape="showColorCfg = false">
+        <button @click="showColorCfg = !showColorCfg"
+                class="flex items-center gap-1.5 text-xs px-2.5 py-1.5 border hairline rounded-md hover:bg-gray-50">
+          <span class="inline-flex gap-0.5">
+            <span class="w-2.5 h-2.5 rounded-full" :style="`background:${theme.primary}`"></span>
+            <span class="w-2.5 h-2.5 rounded-full" :style="`background:${theme.accent}`"></span>
+            <span class="w-2.5 h-2.5 rounded-full" :style="`background:${theme.secondary}`"></span>
+          </span>
+          <span class="text-gray-600">Colors</span>
+        </button>
+        <div x-show="showColorCfg" x-cloak @click.outside="showColorCfg = false"
+             class="absolute right-0 mt-2 w-72 bg-white border hairline rounded-lg shadow-lg p-4 z-30 text-sm">
+          <div class="font-semibold text-xs text-gray-500 uppercase tracking-wide mb-2">Preset</div>
+          <div class="flex flex-wrap gap-1.5 mb-4">
+            <template x-for="name in Object.keys(palettes)" :key="name">
+              <button @click="applyPreset(name)"
+                      :class="themeName === name ? 'bg-gray-900 text-white border-gray-900' : 'hover:bg-gray-50'"
+                      class="text-xs px-2.5 py-1 border hairline rounded-md" x-text="name"></button>
+            </template>
+          </div>
+          <div class="font-semibold text-xs text-gray-500 uppercase tracking-wide mb-2">Custom</div>
+          <div class="space-y-2">
+            <template x-for="role in [{k:'primary',l:'Primary (main ink)'},{k:'accent',l:'Accent / treated'},{k:'secondary',l:'Secondary / control'}]" :key="role.k">
+              <label class="flex items-center justify-between gap-2">
+                <span class="text-gray-700" x-text="role.l"></span>
+                <span class="flex items-center gap-2">
+                  <span class="mono text-[11px] text-gray-400" x-text="theme[role.k]"></span>
+                  <input type="color" :value="theme[role.k]"
+                         @input="theme[role.k] = $event.target.value; themeName = 'Custom'; applyTheme()"
+                         class="w-7 h-7 rounded cursor-pointer border hairline p-0">
+                </span>
+              </label>
+            </template>
+          </div>
+          <div class="flex justify-between items-center mt-4 pt-3 border-t hairline">
+            <button @click="applyPreset('Classic')" class="text-xs text-gray-500 hover:text-gray-900">Reset</button>
+            <button @click="showColorCfg = false" class="text-xs px-3 py-1 bg-gray-900 text-white rounded-md hover:bg-black">Done</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -737,8 +781,29 @@
   <div x-show="!loading && tab === 'correlation'" x-cloak>
     <div class="border hairline rounded-lg p-5">
       <div class="font-semibold mb-1">Correlation matrix</div>
-      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Red = strong positive, blue = strong negative. Deep red blocks may indicate multicollinearity.</div>
+      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Red = strong positive, blue = strong negative. Deep red blocks may indicate multicollinearity. Rows with missing values in any selected column are dropped — trimming columns can grow the usable sample.</div>
+
+      <div class="mb-4" x-show="numericCols.length">
+        <div class="flex items-center justify-between text-xs text-gray-600 mb-2">
+          <div>Columns in matrix (<span x-text="corrCols.length"></span> / <span x-text="numericCols.length"></span>):</div>
+          <div class="flex gap-2">
+            <button @click="corrCols = [...numericCols]; loadCorr()" class="hover:text-gray-900">All</button>
+            <span class="text-gray-300">·</span>
+            <button @click="corrCols = []; loadCorr()" class="hover:text-gray-900">None</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <template x-for="c in numericCols" :key="'cc'+c">
+            <label class="inline-flex items-center gap-1.5 px-2 py-0.5 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
+              <input type="checkbox" :value="c" x-model="corrCols" @change="loadCorr()" class="hidden">
+              <span x-text="c"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+
       <div id="corr-chart" style="min-height:540px"></div>
+      <div x-show="corrCols.length < 2" class="text-xs text-gray-500 py-10 text-center">Select at least 2 columns to show the matrix.</div>
     </div>
   </div>
 
@@ -789,6 +854,41 @@ function datasetView(id) {
     tsCol: '',
     tsCols: [],
     corrLoaded: false,
+    corrCols: [],
+    corr: null,
+    _corrTouched: false,
+    exploreLoaded: false,
+
+    // ── Chart color theme ─────────────────────────────────────────────────
+    showColorCfg: false,
+    themeName: 'Classic',
+    theme: { primary: '#111827', accent: '#dc2626', secondary: '#2563eb' },
+    palettes: {
+      Classic: {
+        primary: '#111827', accent: '#dc2626', secondary: '#2563eb',
+        sequence: ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a', '#0c1f5c'],
+        categorical: ['#111827', '#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#65a30d', '#db2777', '#facc15'],
+        heatmap: 'Viridis',
+      },
+      Mono: {
+        primary: '#111827', accent: '#6b7280', secondary: '#9ca3af',
+        sequence: ['#f3f4f6', '#d1d5db', '#9ca3af', '#6b7280', '#374151', '#111827'],
+        categorical: ['#111827', '#374151', '#6b7280', '#9ca3af', '#d1d5db', '#4b5563', '#1f2937', '#e5e7eb', '#111827', '#6b7280'],
+        heatmap: 'Greys',
+      },
+      'CB-safe': {  // Okabe–Ito, colorblind-safe
+        primary: '#0072B2', accent: '#D55E00', secondary: '#009E73',
+        sequence: ['#deebf7', '#9ecae1', '#56B4E9', '#0072B2', '#08519c', '#08306b'],
+        categorical: ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9', '#F0E442', '#000000'],
+        heatmap: 'Cividis',
+      },
+      Vibrant: {
+        primary: '#7c3aed', accent: '#ec4899', secondary: '#06b6d4',
+        sequence: ['#cffafe', '#67e8f9', '#22d3ee', '#06b6d4', '#0891b2', '#155e75'],
+        categorical: ['#7c3aed', '#ec4899', '#06b6d4', '#f59e0b', '#10b981', '#ef4444', '#3b82f6', '#a855f7'],
+        heatmap: 'Plasma',
+      },
+    },
 
     // Aliases
     aliases: {},
@@ -866,6 +966,10 @@ function datasetView(id) {
     pivot: null,
 
     async init() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('esg.chartTheme') || 'null');
+        if (saved?.theme) { this.themeName = saved.themeName || 'Custom'; this.theme = saved.theme; }
+      } catch (e) {}
       const [p, prev, aliasResp] = await Promise.all([
         fetch(`/api/datasets/${this.id}/profile`).then(r => r.json()),
         fetch(`/api/datasets/${this.id}/preview`).then(r => r.json()),
@@ -891,6 +995,12 @@ function datasetView(id) {
       if (k === 'panel' && !this.panelLoaded) this.loadPanel();
       if (k === 'distributions' && this.dist) this.$nextTick(() => this.renderDist());
       if (k === 'explore') {
+        if (!this.exploreLoaded) {
+          this.exploreLoaded = true;
+          this.setExploreDefaults();
+          this.$nextTick(() => this.loadExploreAll());
+          return;
+        }
         this.$nextTick(() => {
           if (this.scatter) this.renderScatter();
           if (this.groupData) this.renderGroup();
@@ -906,8 +1016,107 @@ function datasetView(id) {
       }
     },
 
+    // Pick sensible default fields so every Explore chart draws on first open.
+    setExploreDefaults() {
+      const time = this.profile?.panel?.time_col || 'Year';
+      const entity = this.profile?.panel?.entity_col || 'COID';
+      const skip = new Set([time, entity, 'COID', 'Year']);
+      const inums = this.numericCols.filter(c => !skip.has(c));
+      if (!inums.length) return;
+      const score = inums.find(c => /tesg/i.test(c))
+                 || inums.find(c => /esg|score/i.test(c));
+      const yDef = score || inums[1] || inums[0];
+      const xDef = inums.find(c => c !== yDef) || inums[0];
+      const sizeDef = inums.find(c => /size|asset|liabilit|revenue|cap/i.test(c)) || inums[2] || xDef;
+      const catDef = this.catCols.find(c => /indu|sector|tse|market/i.test(c))
+                  || this.catCols.find(c => c !== entity)
+                  || time;
+
+      const set = (k, v) => { if (!this[k] && v) this[k] = v; };
+      set('scatterX', xDef);   set('scatterY', yDef);
+      set('quintileX', xDef);  set('quintileY', yDef);
+      set('tcTreat', xDef);    set('tcValue', yDef);
+      set('trajCol', yDef);
+      set('llX', xDef);        set('llY', yDef);
+      set('fdX', xDef);        set('fdY', yDef);
+      set('groupBy', catDef);  set('groupValue', yDef);
+      set('ridgeValue', yDef); set('ridgeGroup', time);
+      set('bbX', xDef);        set('bbY', yDef);  set('bbSize', sizeDef);
+      set('pvRow', catDef);    set('pvCol', time); set('pvValue', yDef);
+      if (!this.outCols.length) this.outCols = inums.slice(0, 12);
+    },
+
+    loadExploreAll() {
+      this.loadScatter();
+      this.loadGroup();
+      this.loadQuintile();
+      this.loadTC();
+      this.loadTraj();
+      this.loadLL();
+      this.loadRidge();
+      this.loadFD();
+      this.loadBubble();
+      this.loadPivot();
+    },
+
     get numericCols() {
       return (this.profile?.columns || []).filter(c => c.is_numeric).map(c => c.name);
+    },
+
+    get cols() {
+      return (this.profile?.columns || []).map(c => c.name);
+    },
+
+    get catCols() {
+      return (this.profile?.columns || []).filter(c => !c.is_numeric).map(c => c.name);
+    },
+
+    // ── Theme helpers ─────────────────────────────────────────────────────
+    get _pal() { return this.palettes[this.themeName] || this.palettes.Classic; },
+    get seq() { return this._pal.sequence; },
+    get cat() { return this._pal.categorical; },
+    get heatmapScale() { return this._pal.heatmap; },
+    // Diverging scale derived from theme so it tracks custom colors:
+    // secondary = negative, white = 0, accent = positive.
+    get diverging() {
+      return [[0, this.theme.secondary], [0.5, '#ffffff'], [1, this.theme.accent]];
+    },
+    rgba(hex, a) {
+      const h = (hex || '#000000').replace('#', '');
+      const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+      return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+    },
+    applyPreset(name) {
+      const p = this.palettes[name];
+      if (!p) return;
+      this.themeName = name;
+      this.theme = { primary: p.primary, accent: p.accent, secondary: p.secondary };
+      this.applyTheme();
+    },
+    applyTheme() {
+      try {
+        localStorage.setItem('esg.chartTheme',
+          JSON.stringify({ themeName: this.themeName, theme: this.theme }));
+      } catch (e) {}
+      this.rerenderAll();
+    },
+    rerenderAll() {
+      this.$nextTick(() => {
+        if (this.tab === 'overview' && this.tsCol) this.renderTs();
+        if (this.panelData) this.renderPanel();
+        if (this.dist) this.renderDist();
+        if (this.scatter) this.renderScatter();
+        if (this.groupData) this.renderGroup();
+        if (this.quintile) this.renderQuintile();
+        if (this.tc) this.renderTC();
+        if (this.traj) this.renderTraj();
+        if (this.ll) this.renderLL();
+        if (this.ridge) this.renderRidge();
+        if (this.fd) this.renderFD();
+        if (this.bubble) this.renderBubble();
+        if (this.pivot) this.renderPivot();
+        if (this.corr) this.renderCorr();
+      });
     },
 
     get distHints() {
@@ -938,7 +1147,7 @@ function datasetView(id) {
       const centers = h.edges.slice(0, -1).map((e, i) => (e + h.edges[i+1]) / 2);
       Plotly.newPlot('dist-hist', [{
         x: centers, y: h.counts, type: 'bar',
-        marker: { color: '#111827' },
+        marker: { color: this.theme.primary },
         hovertemplate: 'bin: %{x:.3f}<br>count: %{y}<extra></extra>',
       }], {
         margin: { l: 50, r: 20, t: 10, b: 40 },
@@ -958,7 +1167,7 @@ function datasetView(id) {
         mean: [s.mean],
         x: [this.dist.name],
         boxpoints: false,
-        marker: { color: '#111827' },
+        marker: { color: this.theme.primary },
       }], {
         margin: { l: 50, r: 20, t: 10, b: 40 },
         yaxis: { gridcolor: '#f3f4f6' },
@@ -987,7 +1196,7 @@ function datasetView(id) {
 
       Plotly.newPlot('panel-yperf', [{
         x: d.years_per_firm.x, y: d.years_per_firm.y,
-        type: 'bar', marker: { color: '#111827' },
+        type: 'bar', marker: { color: this.theme.primary },
       }], {
         margin: { l: 50, r: 20, t: 10, b: 40 },
         xaxis: { title: 'Years observed', gridcolor: '#f3f4f6', tickmode: 'linear' },
@@ -999,8 +1208,8 @@ function datasetView(id) {
       Plotly.newPlot('panel-active', [{
         x: d.active_per_year.x, y: d.active_per_year.y,
         type: 'scatter', mode: 'lines+markers',
-        line: { color: '#111827', width: 2 },
-        marker: { size: 7, color: '#111827' },
+        line: { color: this.theme.primary, width: 2 },
+        marker: { size: 7, color: this.theme.primary },
       }], {
         margin: { l: 50, r: 20, t: 10, b: 40 },
         xaxis: { title: 'Year', gridcolor: '#f3f4f6', tickmode: 'linear' },
@@ -1011,9 +1220,9 @@ function datasetView(id) {
 
       Plotly.newPlot('panel-flow', [
         { x: d.entries_per_year.x, y: d.entries_per_year.y,
-          name: 'Entries', type: 'bar', marker: { color: '#10b981' } },
+          name: 'Entries', type: 'bar', marker: { color: this.theme.secondary } },
         { x: d.exits_per_year.x, y: d.exits_per_year.y.map(v => -v),
-          name: 'Exits', type: 'bar', marker: { color: '#ef4444' } },
+          name: 'Exits', type: 'bar', marker: { color: this.theme.accent } },
       ], {
         margin: { l: 50, r: 20, t: 10, b: 40 },
         barmode: 'relative',
@@ -1030,9 +1239,9 @@ function datasetView(id) {
         const labels = sorted.map(v => v.col);
         Plotly.newPlot('variance-bar', [
           { y: labels, x: sorted.map(v => v.within_pct), name: 'Within (over time)',
-            type: 'bar', orientation: 'h', marker: { color: '#2563eb' } },
+            type: 'bar', orientation: 'h', marker: { color: this.theme.secondary } },
           { y: labels, x: sorted.map(v => v.between_pct), name: 'Between (across firms)',
-            type: 'bar', orientation: 'h', marker: { color: '#94a3b8' } },
+            type: 'bar', orientation: 'h', marker: { color: this.rgba(this.theme.primary, 0.45) } },
         ], {
           margin: { l: 240, r: 20, t: 10, b: 40 },
           barmode: 'stack',
@@ -1058,7 +1267,7 @@ function datasetView(id) {
       const traces = [{
         x: this.scatter.x, y: this.scatter.y,
         type: 'scattergl', mode: 'markers',
-        marker: { size: 5, color: '#111827', opacity: 0.4 },
+        marker: { size: 5, color: this.theme.primary, opacity: 0.4 },
         name: 'Data',
       }];
       if (this.scatter.fit) {
@@ -1067,7 +1276,7 @@ function datasetView(id) {
           x: [f.x_min, f.x_max],
           y: [f.intercept + f.slope * f.x_min, f.intercept + f.slope * f.x_max],
           type: 'scatter', mode: 'lines',
-          line: { color: '#dc2626', width: 2 },
+          line: { color: this.theme.accent, width: 2 },
           name: `fit (corr=${f.corr.toFixed(3)})`,
         });
       }
@@ -1096,7 +1305,7 @@ function datasetView(id) {
         y: d.groups, x: d.mean,
         orientation: 'h',
         error_x: { type: 'data', array: d.std, thickness: 1, color: '#9ca3af' },
-        marker: { color: '#111827' },
+        marker: { color: this.theme.primary },
         text: d.count.map(c => `n=${c}`),
         textposition: 'outside',
         hovertemplate: '%{y}<br>mean: %{x:.3f}<br>%{text}<extra></extra>',
@@ -1120,7 +1329,7 @@ function datasetView(id) {
     renderQuintile() {
       if (!this.quintile || this.quintile.error) return;
       const d = this.quintile;
-      const palette = ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a', '#0c1f5c'];
+      const palette = this.seq;
       const traces = d.quintiles.map((q, i) => ({
         x: d.time, y: q.values,
         type: 'scatter', mode: 'lines+markers',
@@ -1155,9 +1364,9 @@ function datasetView(id) {
       const d = this.tc;
       const traces = [
         { x: d.time, y: d.high_mean, name: 'High exposure (treated)', type: 'scatter', mode: 'lines+markers',
-          line: { color: '#dc2626', width: 2.5 }, marker: { size: 7 } },
+          line: { color: this.theme.accent, width: 2.5 }, marker: { size: 7 } },
         { x: d.time, y: d.low_mean, name: 'Low exposure (control)', type: 'scatter', mode: 'lines+markers',
-          line: { color: '#2563eb', width: 2.5 }, marker: { size: 7 } },
+          line: { color: this.theme.secondary, width: 2.5 }, marker: { size: 7 } },
       ];
       const layout = {
         margin: { l: 60, r: 20, t: 10, b: 60 },
@@ -1199,12 +1408,12 @@ function datasetView(id) {
       const d = this.traj;
       const traces = d.trajectories.map(t => ({
         x: t.x, y: t.y, type: 'scatter', mode: 'lines',
-        name: t.entity, line: { width: 1, color: 'rgba(17,24,39,0.25)' },
+        name: t.entity, line: { width: 1, color: this.rgba(this.theme.primary, 0.25) },
         showlegend: false, hovertemplate: 'firm ' + t.entity + '<br>%{x}: %{y:.3f}<extra></extra>',
       }));
       traces.push({
         x: d.mean.x, y: d.mean.y, type: 'scatter', mode: 'lines+markers',
-        name: 'Overall mean', line: { color: '#dc2626', width: 3 },
+        name: 'Overall mean', line: { color: this.theme.accent, width: 3 },
         marker: { size: 8 }, hovertemplate: 'mean<br>%{x}: %{y:.3f}<extra></extra>',
       });
       Plotly.newPlot('traj-chart', traces, {
@@ -1233,7 +1442,7 @@ function datasetView(id) {
       const colors = d.correlations.map(c => {
         if (c === null) return '#e5e7eb';
         const a = Math.min(1, Math.abs(c) / 0.5);
-        return c >= 0 ? `rgba(220,38,38,${a})` : `rgba(37,99,235,${a})`;
+        return c >= 0 ? this.rgba(this.theme.accent, a) : this.rgba(this.theme.secondary, a);
       });
       Plotly.newPlot('ll-chart', [{
         x: d.lags.map(l => `${l > 0 ? 'X(t-' + l + ')' : (l < 0 ? 'X(t+' + (-l) + ')' : 'X(t)')}`),
@@ -1303,8 +1512,8 @@ function datasetView(id) {
         traces.push({
           x: d.centers, y, type: 'scatter', mode: 'lines',
           fill: 'tonexty',
-          line: { color: '#111827', width: 1 },
-          fillcolor: `rgba(37,99,235,${0.15 + 0.5 * (i / groups.length)})`,
+          line: { color: this.theme.primary, width: 1 },
+          fillcolor: this.rgba(this.theme.secondary, 0.15 + 0.5 * (i / groups.length)),
           name: g.group,
           hovertemplate: `${g.group} · n=${g.n} · mean=${g.mean}<extra></extra>`,
           showlegend: false,
@@ -1344,7 +1553,7 @@ function datasetView(id) {
       const d = this.fd;
       const traces = [{
         x: d.x, y: d.y, type: 'scattergl', mode: 'markers',
-        marker: { size: 4, color: '#111827', opacity: 0.4 },
+        marker: { size: 4, color: this.theme.primary, opacity: 0.4 },
         name: 'Δ',
       }];
       if (d.fit) {
@@ -1353,7 +1562,7 @@ function datasetView(id) {
           x: [f.x_min, f.x_max],
           y: [f.intercept + f.slope * f.x_min, f.intercept + f.slope * f.x_max],
           type: 'scatter', mode: 'lines',
-          line: { color: '#dc2626', width: 2 },
+          line: { color: this.theme.accent, width: 2 },
           name: `fit (corr=${f.corr.toFixed(4)})`,
         });
       }
@@ -1384,7 +1593,7 @@ function datasetView(id) {
       const range = sMax - sMin || 1;
       const scaled = sizes.map(s => 5 + 35 * (s - sMin) / range);
       const traces = [];
-      const palette = ['#111827','#2563eb','#16a34a','#dc2626','#9333ea','#ea580c','#0891b2','#65a30d','#db2777','#facc15'];
+      const palette = this.cat;
       if (d.color && d.color.length) {
         const groups = {};
         d.color.forEach((c, i) => { (groups[c] = groups[c] || []).push(i); });
@@ -1400,7 +1609,7 @@ function datasetView(id) {
       } else {
         traces.push({
           x: d.x, y: d.y, mode: 'markers', type: 'scatter',
-          marker: { size: scaled, color: '#111827', opacity: 0.5 },
+          marker: { size: scaled, color: this.theme.primary, opacity: 0.5 },
           name: 'all',
         });
       }
@@ -1427,7 +1636,7 @@ function datasetView(id) {
       Plotly.newPlot('pivot-chart', [{
         z: d.values, x: d.cols, y: d.rows,
         type: 'heatmap',
-        colorscale: 'Viridis',
+        colorscale: this.heatmapScale,
         text: d.values.map(row => row.map(v => v === null ? '' : v.toFixed(2))),
         texttemplate: '%{text}',
         textfont: { size: 9 },
@@ -1471,8 +1680,8 @@ function datasetView(id) {
       Plotly.newPlot('ts-chart', [{
         x: ts.time, y: ts.series[this.tsCol],
         type: 'scatter', mode: 'lines+markers',
-        line: { color: '#111827', width: 2 },
-        marker: { size: 7, color: '#111827' },
+        line: { color: this.theme.primary, width: 2 },
+        marker: { size: 7, color: this.theme.primary },
       }], {
         margin: { l: 60, r: 20, t: 10, b: 40 },
         xaxis: { gridcolor: '#f3f4f6', tickmode: 'linear' },
@@ -1484,21 +1693,33 @@ function datasetView(id) {
 
     async loadCorr() {
       this.corrLoaded = true;
-      const r = await fetch(`/api/datasets/${this.id}/correlation`);
-      const corr = await r.json();
-      this.$nextTick(() => {
-        Plotly.newPlot('corr-chart', [{
-          z: corr.matrix, x: corr.cols, y: corr.cols,
-          type: 'heatmap',
-          colorscale: [[0, '#1e3a8a'], [0.5, '#ffffff'], [1, '#7f1d1d']],
-          zmin: -1, zmax: 1,
-        }], {
-          margin: { l: 220, r: 20, t: 10, b: 220 },
-          xaxis: { tickangle: -45, tickfont: { size: 10 } },
-          yaxis: { tickfont: { size: 10 }, autorange: 'reversed' },
-          font: { family: 'Inter' },
-        }, { displayModeBar: false, responsive: true });
-      });
+      // Default to the full set of numeric columns the first time.
+      if (!this.corrCols.length && !this._corrTouched) {
+        this.corrCols = [...this.numericCols];
+      }
+      this._corrTouched = true;
+      if (this.corrCols.length < 2) {
+        if (window.Plotly) Plotly.purge('corr-chart');
+        return;
+      }
+      const qs = `?cols=${encodeURIComponent(this.corrCols.join(','))}`;
+      const r = await fetch(`/api/datasets/${this.id}/correlation${qs}`);
+      this.corr = await r.json();
+      this.$nextTick(() => this.renderCorr());
+    },
+    renderCorr() {
+      if (!this.corr || !this.corr.matrix?.length) return;
+      Plotly.newPlot('corr-chart', [{
+        z: this.corr.matrix, x: this.corr.cols, y: this.corr.cols,
+        type: 'heatmap',
+        colorscale: this.diverging,
+        zmin: -1, zmax: 1,
+      }], {
+        margin: { l: 220, r: 20, t: 10, b: 220 },
+        xaxis: { tickangle: -45, tickfont: { size: 10 } },
+        yaxis: { tickfont: { size: 10 }, autorange: 'reversed' },
+        font: { family: 'Inter' },
+      }, { displayModeBar: false, responsive: true });
     }
   }
 }

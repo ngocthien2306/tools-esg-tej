@@ -20,6 +20,8 @@ def profile_dataset(df: pd.DataFrame, entity_col: Optional[str] = None,
         }
         if meta["is_numeric"]:
             clean = s.dropna()
+            if pd.api.types.is_bool_dtype(clean):
+                clean = clean.astype(float)
             if len(clean):
                 meta.update({
                     "mean": float(clean.mean()),
