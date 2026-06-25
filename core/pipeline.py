@@ -11,6 +11,21 @@ def _sig(p: float) -> str:
     return "***" if p < 0.01 else ("**" if p < 0.05 else ("*" if p < 0.10 else ""))
 
 
+def _independent_cols(sub: pd.DataFrame, cols):
+    """Keep only columns that raise the matrix rank — i.e. drop any regressor
+    that is an exact linear combination of the columns before it. Earlier
+    columns have priority, so order `cols` with the ones to keep up front."""
+    keep, M, rank = [], None, 0
+    for c in cols:
+        v = sub[c].to_numpy(dtype=float).reshape(-1, 1)
+        cand = v if M is None else np.hstack([M, v])
+        nr = int(np.linalg.matrix_rank(cand))
+        if nr > rank:
+            keep.append(c)
+            M, rank = cand, nr
+    return keep
+
+
 def _make_lag(df: pd.DataFrame, col: str, lag: int, entity_col: str) -> str:
     if lag == 0:
         return col
@@ -126,6 +141,25 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
     if not cfg.models:
         cfg.models = [ModelSpec(name="Model 1", extra_vars=[], label="Base controls")]
         mode = cfg.sample_filter_mode
+
+        # Base-controls column for the non-zero subsample panel so it has the
+        # same column count as the full-sample panel. Restricted to firms with
+        # positive combined foreign exposure (prefer the EU+US total var).
+        if mode == "compare_both" and cfg.revenue_vars:
+            combined = next((rv for rv in cfg.revenue_vars
+                             if "EU" in rv and "US" in rv and rv in rev_lag_cols), None)
+            if combined is None:
+                combined = next((rv for rv in cfg.revenue_vars if rv in rev_lag_cols), None)
+            if combined is not None:
+                cfg.models.append(ModelSpec(
+                    name="Model 1 (>0)",
+                    extra_vars=[],
+                    filter_col=combined,
+                    filter_op=">",
+                    filter_value=0.0,
+                    label=f"Base controls · {combined} > 0",
+                ))
+
         for rv in cfg.revenue_vars:
             if rv not in rev_lag_cols:
                 continue
@@ -145,9 +179,19 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
                     label=f"{rv} > 0",
                 ))
         if did_info:
+            # Drop regressors that fixed effects absorb perfectly, otherwise the
+            # design matrix is rank-deficient (PanelOLS: "exog does not have full
+            # column rank"). Year FE absorbs Post; entity FE absorbs High_Treat.
+            # The DID interaction is always identified and kept.
+            # DID first so it is preferentially kept if collinearity forces a drop.
+            did_vars = ["DID"]
+            if not cfg.entity_effects:
+                did_vars.append("High_Treat")
+            if not cfg.time_effects:
+                did_vars.append("Post")
             cfg.models.append(ModelSpec(
                 name="Model DID",
-                extra_vars=["High_Treat", "Post", "DID"],
+                extra_vars=did_vars,
                 label="DID",
             ))
 
@@ -191,6 +235,12 @@ def run_analysis(cfg: AnalysisConfig) -> Dict[str, Any]:
         seen = set()
         xcols = [c for c in (base_lag_cols + extra + valid_ind)
                  if c != cfg.target and not (c in seen or seen.add(c))]
+
+        # Drop any regressor that is an exact linear combination of the others
+        # (e.g. DID ≡ High_Treat when Post is constant in the sample), which would
+        # otherwise fail PanelOLS with "exog does not have full column rank".
+        if xcols:
+            xcols = _independent_cols(sub, xcols)
 
         if not xcols:
             results[model.name] = {"error": "No regressors"}

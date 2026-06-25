@@ -28,6 +28,11 @@
               <span class="block text-[11px] text-gray-500">Academic format — models in columns, coef over (t-stat), auto Panel A/B.</span></span>
           </label>
           <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" value="journal" x-model="exp.layout" class="mt-0.5">
+            <span><span class="font-medium">Journal style</span>
+              <span class="block text-[11px] text-gray-500">Publication table + "Dependent variable" grouped header, tight panels.</span></span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
             <input type="radio" value="comparison" x-model="exp.layout" class="mt-0.5">
             <span><span class="font-medium">Comparison matrix</span>
               <span class="block text-[11px] text-gray-500">All models as columns in one flat table.</span></span>

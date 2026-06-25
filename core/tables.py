@@ -83,9 +83,17 @@ def _fe_rows(cfg: Dict[str, Any], ncols: int) -> List[Dict[str, Any]]:
     return rows
 
 
+def _note(cfg: Dict[str, Any], stat: str) -> str:
+    stat_label = {"tstat": "t-statistics", "se": "Standard errors",
+                  "pvalue": "p-values"}.get(stat, "t-statistics")
+    return (f"{stat_label} in parentheses. "
+            f"*** p<0.01, ** p<0.05, * p<0.10. {_se_note(cfg)}")
+
+
 def _build_panel(name: str, models: List[tuple], var_order: List[str],
                  cfg: Dict[str, Any], stat: str,
-                 aliases: Optional[Dict[str, str]]) -> Dict[str, Any]:
+                 aliases: Optional[Dict[str, str]],
+                 rsq_label: str = "Within R²") -> Dict[str, Any]:
     columns = [{"idx": f"({i+1})", "model": m, "label": d.get("label", "")}
                for i, (m, d) in enumerate(models)]
 
@@ -109,7 +117,7 @@ def _build_panel(name: str, models: List[tuple], var_order: List[str],
     stat_rows = _fe_rows(cfg, ncols)
     stat_rows.append({"label": "Observations",
                       "values": [f"{d['n_obs']:,}" for _, d in models]})
-    stat_rows.append({"label": "Within R²",
+    stat_rows.append({"label": rsq_label,
                       "values": [f"{d['rsq_within']:.3f}" for _, d in models]})
 
     return {"name": name, "columns": columns, "rows": coef_rows, "stat_rows": stat_rows}
@@ -133,17 +141,46 @@ def build_publication(run_data: Dict[str, Any], stat: str = "tstat",
         only = full or sub or models
         panels.append(_build_panel("", only, var_order, cfg, stat, aliases))
 
-    stat_label = {"tstat": "t-statistics", "se": "Standard errors",
-                  "pvalue": "p-values"}.get(stat, "t-statistics")
-    note = (f"{stat_label} in parentheses. "
-            f"*** p<0.01, ** p<0.05, * p<0.10. {_se_note(cfg)}")
-
     return {
         "kind": "publication",
         "title": f"Table. {cfg['target']}",
         "subtitle": "Panel regression estimates",
         "panels": panels,
-        "note": note,
+        "note": _note(cfg, stat),
+        "stat": stat,
+    }
+
+
+def build_journal(run_data: Dict[str, Any], stat: str = "tstat",
+                  aliases: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Journal-style table: like publication, plus a 'Dependent variable'
+    grouped header spanning the model columns, and 'R-squared' label."""
+    cfg = run_data["config"]
+    models = _models(run_data)
+    var_order = _ordered_vars(models)
+    full = [(m, d) for m, d in models if not _is_subsample(m)]
+    sub = [(m, d) for m, d in models if _is_subsample(m)]
+
+    dep = aliases.get(cfg["target"], cfg["target"]) if aliases else cfg["target"]
+
+    def mk(name, ms):
+        p = _build_panel(name, ms, var_order, cfg, stat, aliases, rsq_label="R-squared")
+        p["group_header"] = {"label": "Dependent variable", "value": dep}
+        return p
+
+    panels = []
+    if full and sub:
+        panels.append(mk("Panel A. Full Sample", full))
+        panels.append(mk("Panel B. Non-Zero Revenue Share Subsample", sub))
+    else:
+        panels.append(mk("", full or sub or models))
+
+    return {
+        "kind": "journal",
+        "title": f"Table. {cfg['target']}",
+        "subtitle": "",
+        "panels": panels,
+        "note": _note(cfg, stat),
         "stat": stat,
     }
 
@@ -159,18 +196,81 @@ def build_comparison(run_data: Dict[str, Any], stat: str = "tstat",
     models = _models(run_data)
     var_order = _ordered_vars(models)
     panel = _build_panel("", models, var_order, cfg, stat, aliases)
-
-    stat_label = {"tstat": "t-statistics", "se": "Standard errors",
-                  "pvalue": "p-values"}.get(stat, "t-statistics")
-    note = (f"{stat_label} in parentheses. "
-            f"*** p<0.01, ** p<0.05, * p<0.10. {_se_note(cfg)}")
     return {
         "kind": "comparison",
         "title": f"Table. {cfg['target']} — model comparison",
         "subtitle": "",
         "panels": [panel],
-        "note": note,
+        "note": _note(cfg, stat),
         "stat": stat,
+    }
+
+
+def build_correlation(corr_data: Dict[str, Any],
+                      aliases: Optional[Dict[str, str]] = None,
+                      pos: str = "#dc2626", neg: str = "#2563eb") -> Dict[str, Any]:
+    """Academic lower-triangular correlation table, heat-shaded by correlation
+    value (pos colour for +, neg colour for −) and bold where significant."""
+    vars_raw = corr_data["vars"]
+    names = [(aliases.get(v, v) if aliases else v) for v in vars_raw]
+    k = len(vars_raw)
+    r = corr_data["r"]
+    p = corr_data["p"]
+    n_obs = corr_data.get("n_obs", 0)
+
+    rows = []
+    for i in range(k):
+        cells = []
+        for j in range(k):
+            if j > i:
+                cells.append(None)                       # upper triangle blank
+            elif j == i:
+                cells.append({"r": 1.0, "bold": False})
+            else:
+                rv = r[i][j]
+                if rv is None:
+                    cells.append(None)
+                else:
+                    pv = p[i][j]
+                    cells.append({"r": rv, "bold": pv is not None and pv <= 0.05})
+        rows.append(cells)
+
+    note = (f"This table reports pairwise correlations among the variables used in "
+            f"the analysis. The sample consists of {n_obs:,} firm-year observations. "
+            f"Cell colour intensity is proportional to the correlation magnitude; "
+            f"bold coefficients are significant at the 5% level (two-tailed).")
+    return {
+        "kind": "correlation",
+        "title": "Correlation Matrix",
+        "note": note,
+        "n_vars": k,
+        "rows": rows,
+        "var_list": list(enumerate(names, 1)),
+        "pos": (pos or "#dc2626"),
+        "neg": (neg or "#2563eb"),
+    }
+
+
+def build_vif(vif_data: Dict[str, Any],
+              aliases: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """VIF diagnostic table: Variable | VIF | √VIF | Tolerance, + Mean VIF."""
+    import math
+    rows = []
+    for r in vif_data["rows"]:
+        name = aliases.get(r["var"], r["var"]) if aliases else r["var"]
+        rows.append({
+            "name": name,
+            "vif": ("∞" if not math.isfinite(r["vif"]) else f"{r['vif']:.2f}"),
+            "sqrt_vif": ("∞" if not math.isfinite(r["sqrt_vif"]) else f"{r['sqrt_vif']:.2f}"),
+            "tol": f"{r['tolerance']:.3f}",
+        })
+    return {
+        "kind": "vif",
+        "title": "Variance Inflation Factor (VIF) Test",
+        "subtitle": "Table A1. Variance Inflation Factor (VIF) Results",
+        "rows": rows,
+        "mean_vif": f"{vif_data['mean_vif']:.2f}",
+        "n": vif_data.get("n", 0),
     }
 
 
@@ -178,4 +278,6 @@ def build_spec(run_data: Dict[str, Any], layout: str = "publication",
                stat: str = "tstat", aliases: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     if layout == "comparison":
         return build_comparison(run_data, stat, aliases)
+    if layout == "journal":
+        return build_journal(run_data, stat, aliases)
     return build_publication(run_data, stat, aliases)

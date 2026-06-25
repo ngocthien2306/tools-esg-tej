@@ -780,8 +780,21 @@
   <!-- Correlation -->
   <div x-show="!loading && tab === 'correlation'" x-cloak>
     <div class="border hairline rounded-lg p-5">
-      <div class="font-semibold mb-1">Correlation matrix</div>
-      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Red = strong positive, blue = strong negative. Deep red blocks may indicate multicollinearity. Rows with missing values in any selected column are dropped — trimming columns can grow the usable sample.</div>
+      <div class="flex items-start justify-between gap-3 mb-1">
+        <div class="font-semibold">Correlation matrix</div>
+        <div class="flex gap-2 shrink-0">
+          <button @click="exportCorr('docx')" :disabled="corrCols.length < 2"
+                  class="text-xs px-3 py-1.5 bg-gray-900 text-white rounded-md hover:bg-black disabled:opacity-40">Corr → Word</button>
+          <button @click="exportCorr('html')" :disabled="corrCols.length < 2"
+                  class="text-xs px-3 py-1.5 border hairline rounded-md hover:bg-gray-50 disabled:opacity-40">Corr → HTML</button>
+          <span class="w-px bg-gray-200 mx-0.5"></span>
+          <button @click="exportVif('docx')" :disabled="corrCols.length < 2"
+                  class="text-xs px-3 py-1.5 bg-gray-900 text-white rounded-md hover:bg-black disabled:opacity-40">VIF → Word</button>
+          <button @click="exportVif('html')" :disabled="corrCols.length < 2"
+                  class="text-xs px-3 py-1.5 border hairline rounded-md hover:bg-gray-50 disabled:opacity-40">VIF → HTML</button>
+        </div>
+      </div>
+      <div class="text-xs text-gray-500 mb-4">Pearson correlation. Red = strong positive, blue = strong negative. Deep red blocks may indicate multicollinearity. Rows with missing values in any selected column are dropped — trimming columns can grow the usable sample. <span class="text-gray-400">Exports use the selected columns: Corr = lower-triangular heatmap; VIF = multicollinearity diagnostic (each variable regressed on the others).</span></div>
 
       <div class="mb-4" x-show="numericCols.length">
         <div class="flex items-center justify-between text-xs text-gray-600 mb-2">
@@ -796,7 +809,7 @@
           <template x-for="c in numericCols" :key="'cc'+c">
             <label class="inline-flex items-center gap-1.5 px-2 py-0.5 border hairline rounded-md text-xs cursor-pointer has-[:checked]:bg-gray-900 has-[:checked]:text-white has-[:checked]:border-gray-900">
               <input type="checkbox" :value="c" x-model="corrCols" @change="loadCorr()" class="hidden">
-              <span x-text="c"></span>
+              <span x-text="aliases[c] || c"></span>
             </label>
           </template>
         </div>
@@ -990,7 +1003,10 @@ function datasetView(id) {
 
     setTab(k) {
       this.tab = k;
-      if (k === 'correlation' && !this.corrLoaded) this.loadCorr();
+      if (k === 'correlation') {
+        if (!this.corrLoaded) this.loadCorr();
+        else this.$nextTick(() => this.renderCorr());
+      }
       if (k === 'overview') this.$nextTick(() => this.renderTs());
       if (k === 'panel' && !this.panelLoaded) this.loadPanel();
       if (k === 'distributions' && this.dist) this.$nextTick(() => this.renderDist());
@@ -1691,6 +1707,26 @@ function datasetView(id) {
       }, { displayModeBar: false, responsive: true });
     },
 
+    exportCorr(format) {
+      if (this.corrCols.length < 2) return;
+      // Use the chart theme's diverging colours: accent = +, secondary = −.
+      const qs = `?format=${format}`
+        + `&cols=${encodeURIComponent(this.corrCols.join(','))}`
+        + `&pos=${encodeURIComponent(this.theme.accent)}`
+        + `&neg=${encodeURIComponent(this.theme.secondary)}`;
+      const url = `/api/datasets/${this.id}/correlation/export${qs}`;
+      if (format === 'html') window.open(url, '_blank');
+      else window.location.href = url;
+    },
+
+    exportVif(format) {
+      if (this.corrCols.length < 2) return;
+      const qs = `?format=${format}&cols=${encodeURIComponent(this.corrCols.join(','))}`;
+      const url = `/api/datasets/${this.id}/vif/export${qs}`;
+      if (format === 'html') window.open(url, '_blank');
+      else window.location.href = url;
+    },
+
     async loadCorr() {
       this.corrLoaded = true;
       // Default to the full set of numeric columns the first time.
@@ -1709,8 +1745,9 @@ function datasetView(id) {
     },
     renderCorr() {
       if (!this.corr || !this.corr.matrix?.length) return;
+      const labels = this.corr.cols.map(c => this.aliases[c] || c);
       Plotly.newPlot('corr-chart', [{
-        z: this.corr.matrix, x: this.corr.cols, y: this.corr.cols,
+        z: this.corr.matrix, x: labels, y: labels,
         type: 'heatmap',
         colorscale: this.diverging,
         zmin: -1, zmax: 1,

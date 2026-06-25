@@ -663,3 +663,85 @@ def correlation_matrix(df: pd.DataFrame,
         "cols": list(corr.columns),
         "matrix": corr.values.tolist(),
     }
+
+
+def correlation_table(df: pd.DataFrame,
+                      cols: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Pairwise Pearson correlations + two-tailed p-values for an academic
+    correlation table. Each pair uses all rows where both columns are present."""
+    from scipy import stats
+    if cols is None:
+        cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    else:
+        cols = [c for c in cols
+                if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    sub = df[cols].apply(pd.to_numeric, errors="coerce")
+    k = len(cols)
+    if k == 0:
+        return {"vars": [], "r": [], "p": [], "n_obs": 0}
+
+    corr = sub.corr()                       # pairwise Pearson
+    notna = sub.notna().to_numpy().astype(float)
+    n_mat = notna.T @ notna                 # pairwise sample sizes
+    r = corr.to_numpy()
+    p = np.ones((k, k))
+    for i in range(k):
+        for j in range(k):
+            if i == j:
+                p[i, j] = 0.0
+                continue
+            n = n_mat[i, j]
+            rij = r[i, j]
+            if n < 3 or np.isnan(rij) or abs(rij) >= 1:
+                p[i, j] = np.nan
+                continue
+            t = rij * np.sqrt((n - 2) / (1 - rij ** 2))
+            p[i, j] = float(2 * stats.t.sf(abs(t), n - 2))
+
+    r = np.where(np.isnan(r), None, r)
+    return {
+        "vars": list(cols),
+        "r": [[None if v is None else round(float(v), 2) for v in row] for row in r],
+        "p": [[None if (pv is None or np.isnan(pv)) else float(pv) for pv in row]
+              for row in p],
+        "n_obs": int(np.nanmax(n_mat)) if k else 0,
+    }
+
+
+def compute_vif(df: pd.DataFrame,
+                cols: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Variance Inflation Factor for each variable: VIF_i = 1/(1 - R²_i), where
+    R²_i is from OLS of variable i on all the others (listwise-complete sample)."""
+    if cols is None:
+        cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    else:
+        cols = [c for c in cols
+                if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    sub = df[cols].apply(pd.to_numeric, errors="coerce").dropna()
+    n = len(sub)
+    X = sub.to_numpy(dtype=float)
+    rows = []
+    for i, c in enumerate(cols):
+        y = X[:, i]
+        others = np.delete(X, i, axis=1)
+        sst = float(((y - y.mean()) ** 2).sum())
+        if others.shape[1] == 0 or sst == 0:
+            vif = 1.0
+        else:
+            A = np.column_stack([np.ones(len(others)), others])
+            coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+            ssr = float(((y - A @ coef) ** 2).sum())
+            r2 = 1.0 - ssr / sst
+            vif = 1.0 / (1.0 - r2) if r2 < 0.9999 else float("inf")
+        rows.append({
+            "var": c,
+            "vif": vif,
+            "sqrt_vif": vif ** 0.5 if np.isfinite(vif) else float("inf"),
+            "tolerance": (1.0 / vif) if (np.isfinite(vif) and vif > 0) else 0.0,
+        })
+    finite = [r["vif"] for r in rows if np.isfinite(r["vif"])]
+    return {
+        "rows": rows,
+        "mean_vif": (sum(finite) / len(finite)) if finite else 0.0,
+        "n": n,
+    }

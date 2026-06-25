@@ -9,6 +9,7 @@ import pandas as pd
 
 from fastapi import FastAPI, UploadFile, File, Request, HTTPException, Body
 from fastapi.responses import HTMLResponse, FileResponse, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -17,7 +18,7 @@ from paths import RUNS as DATA_RUNS
 from core.config import AnalysisConfig
 from core.loader import save_upload, load_dataset, dataset_path
 from core.profiler import (
-    profile_dataset, correlation_matrix,
+    profile_dataset, correlation_matrix, correlation_table, compute_vif,
     column_distribution, panel_balance, within_between_variance,
     bivariate, group_stats,
     quintile_portfolio, treated_control_trend, firm_trajectories,
@@ -27,8 +28,12 @@ from core.profiler import (
 from core.merger import merge_datasets as merge_fn, merge_two as merge_two_fn
 from core.pipeline import run_analysis
 from core.reporter import export_excel
-from core.tables import build_spec
-from core.exporters import render_html, render_docx, render_xlsx
+from core.tables import build_spec, build_correlation, build_vif
+from core.exporters import (
+    render_html, render_docx, render_xlsx,
+    render_correlation_docx, render_correlation_html,
+    render_vif_docx, render_vif_html,
+)
 from db import db
 
 BASE = Path(__file__).parent
@@ -164,6 +169,68 @@ async def api_correlation(dataset_id: str, cols: str = ""):
     df = load_dataset(dataset_id)
     col_list = [c for c in cols.split(",") if c] if cols else None
     return correlation_matrix(df, col_list)
+
+
+@app.get("/api/datasets/{dataset_id}/correlation/export")
+async def api_correlation_export(dataset_id: str, format: str = "docx", cols: str = "",
+                                 pos: str = "#dc2626", neg: str = "#2563eb"):
+    """Academic correlation table (lower-triangular, heat-shaded by value).
+    format: docx | html ; pos/neg = +/- correlation colours from the chart theme."""
+    fmt = format.lower()
+    if fmt not in ("docx", "html"):
+        raise HTTPException(400, f"Unsupported format '{format}'")
+    df = load_dataset(dataset_id)
+    col_list = [c for c in cols.split(",") if c] if cols else None
+    data = await run_in_threadpool(correlation_table, df, col_list)
+    if not data["vars"]:
+        raise HTTPException(400, "No numeric columns selected")
+
+    aliases = {}
+    try:
+        ds = db.get_dataset(dataset_id)
+        if ds:
+            aliases = ds.get("aliases") or {}
+    except Exception:
+        aliases = {}
+
+    spec = build_correlation(data, aliases, pos=pos, neg=neg)
+    if fmt == "html":
+        return Response(content=render_correlation_html(spec),
+                        media_type="text/html; charset=utf-8")
+    out = RUNS / f"correlation_{dataset_id}.docx"
+    render_correlation_docx(spec, out)
+    return FileResponse(out, filename="correlation_matrix.docx",
+                        media_type=_EXPORT_MEDIA["docx"])
+
+
+@app.get("/api/datasets/{dataset_id}/vif/export")
+async def api_vif_export(dataset_id: str, format: str = "docx", cols: str = ""):
+    """Variance Inflation Factor table. format: docx | html"""
+    fmt = format.lower()
+    if fmt not in ("docx", "html"):
+        raise HTTPException(400, f"Unsupported format '{format}'")
+    df = load_dataset(dataset_id)
+    col_list = [c for c in cols.split(",") if c] if cols else None
+    data = await run_in_threadpool(compute_vif, df, col_list)
+    if not data["rows"]:
+        raise HTTPException(400, "No numeric columns selected")
+
+    aliases = {}
+    try:
+        ds = db.get_dataset(dataset_id)
+        if ds:
+            aliases = ds.get("aliases") or {}
+    except Exception:
+        aliases = {}
+
+    spec = build_vif(data, aliases)
+    if fmt == "html":
+        return Response(content=render_vif_html(spec),
+                        media_type="text/html; charset=utf-8")
+    out = RUNS / f"vif_{dataset_id}.docx"
+    render_vif_docx(spec, out)
+    return FileResponse(out, filename="vif_test.docx",
+                        media_type=_EXPORT_MEDIA["docx"])
 
 
 @app.get("/api/datasets/{dataset_id}/preview")
@@ -341,8 +408,11 @@ async def api_merge(payload: dict = Body(...)):
 
 @app.post("/api/runs")
 async def api_create_run(cfg: AnalysisConfig):
+    # run_analysis is CPU-bound (pandas + PanelOLS fits). Run it in a threadpool
+    # so it never blocks the event loop — otherwise the server freezes for the
+    # whole computation and reverse proxies/tunnels (pinggy, ngrok) hang.
     try:
-        result = run_analysis(cfg)
+        result = await run_in_threadpool(run_analysis, cfg)
     except Exception as e:
         raise HTTPException(400, f"{type(e).__name__}: {e}")
 
